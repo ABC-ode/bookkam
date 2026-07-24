@@ -1,0 +1,17 @@
+{
+  "name": "BOOKKAM — Luxury Car Rental",
+  "short_name": "BOOKKAM",
+  "description": "Rent a car or book a ride with a professional driver in Calabar and Ikom",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#020B18",
+  "theme_color": "#020B18",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "categories": ["travel", "lifestyle"],
+  "screenshots": []
+}

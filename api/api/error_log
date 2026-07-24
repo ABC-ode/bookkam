@@ -1,0 +1,152 @@
+[26-Mar-2026 13:57:23 UTC] WhatsApp [TEST] to 08012345678: 🚗 *BOOKKAM - New Booking!*
+
+Customer: 
+Pickup: Calabar, Calabar Municipal, Cross River State
+Type: Trip
+
+Open the app to accept.
+[26-Mar-2026 13:57:23 UTC] WhatsApp [TEST] to 23408012345678: ✅ *BOOKKAM - Booking Confirmed!*
+
+Booking ID: #4
+Car: Mercedes C300
+Pickup: Calabar, Calabar Municipal, Cross River State
+Type: Trip
+Total: ₦18,000
+
+Thank you for choosing BOOKKAM!
+[26-Mar-2026 15:44:41 UTC] WhatsApp [TEST] to 2348098765432: *BOOKKAM Update*
+
+✅ Your booking #3 for Toyota Prado has been confirmed! Your driver is on the way.
+[26-Mar-2026 15:45:57 UTC] WhatsApp [TEST] to 2348098765432: *BOOKKAM Update*
+
+🚗 Your trip has started! Booking #3.
+[01-Apr-2026 14:05:19 UTC] WhatsApp [TEST] to 2348098765432: *BOOKKAM Update*
+
+🎉 Trip completed! Booking #3. Thank you for choosing BOOKKAM!
+[27-May-2026 13:41:56 UTC] WhatsApp [TEST] to : ✅ *BOOKKAM - Booking Confirmed!*
+
+Booking ID: #5
+Car: Hyundai Tucson
+Pickup: Obinze owerri
+Type: Daily
+Total: ₦30,000
+Deposit: ₦25,000
+
+Thank you for choosing BOOKKAM!
+[27-May-2026 13:43:21 UTC] WhatsApp [TEST] to : ✅ *BOOKKAM - Booking Confirmed!*
+
+Booking ID: #6
+Car: Honda Civic Sport
+Pickup: Obinze owerri
+Type: Daily
+Total: ₦30,000
+Deposit: ₦15,000
+
+Thank you for choosing BOOKKAM!
+[12-Jun-2026 17:47:43 UTC] PHP Fatal error:  Uncaught PDOException: SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry '2348000000002' for key 'uq_phone' in /home/excenvbq/bookkam.com/api/auth.php:76
+Stack trace:
+#0 /home/excenvbq/bookkam.com/api/auth.php(76): PDOStatement->execute()
+#1 /home/excenvbq/bookkam.com/api/auth.php(101): createUser()
+#2 {main}
+  thrown in /home/excenvbq/bookkam.com/api/auth.php on line 76
+[11-Jul-2026 18:30:53 UTC] WhatsApp [TEST] to 2348012345678: 🚗 *BOOKKAM - New Booking!*
+
+Customer: Ukoi Ukam
+Pickup: Ekpo Eyo Street, Calabar South 54, Cross River, Nigeria
+Type: Trip
+
+Open the app to accept.
+[11-Jul-2026 18:30:53 UTC] WhatsApp [TEST] to : ✅ *BOOKKAM - Booking Confirmed!*
+
+Booking ID: #7
+Car: Toyota Camry LE
+Pickup: Ekpo Eyo Street, Calabar South 54, Cross River, Nigeria
+Type: Trip
+Total: ₦15,000
+
+Thank you for choosing BOOKKAM!
+[23-Jul-2026 12:22:26 UTC] PHP Warning:  require_once(../config/db.php): Failed to open stream: No such file or directory in /home/excenvbq/bookkam.com/api/booking-cards.php on line 2
+[23-Jul-2026 12:22:26 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '../config/db.php' (include_path='.:/opt/alt/php82/usr/share/pear:/opt/alt/php82/usr/share/php:/usr/share/pear:/usr/share/php') in /home/excenvbq/bookkam.com/api/booking-cards.php:2
+Stack trace:
+#0 {main}
+  thrown in /home/excenvbq/bookkam.com/api/booking-cards.php on line 2
+[23-Jul-2026 12:22:27 UTC] PHP Warning:  require_once(../config/db.php): Failed to open stream: No such file or directory in /home/excenvbq/bookkam.com/api/event-config.php on line 2
+[23-Jul-2026 12:22:27 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '../config/db.php' (include_path='.:/opt/alt/php82/usr/share/pear:/opt/alt/php82/usr/share/php:/usr/share/pear:/usr/share/php') in /home/excenvbq/bookkam.com/api/event-config.php:2
+Stack trace:
+#0 {main}
+  thrown in /home/excenvbq/bookkam.com/api/event-config.php on line 2
+[23-Jul-2026 12:29:14 UTC] PHP Warning:  require_once(../config/db.php): Failed to open stream: No such file or directory in /home/excenvbq/bookkam.com/api/booking-cards.php on line 2
+[23-Jul-2026 12:29:14 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '../config/db.php' (include_path='.:/opt/alt/php82/usr/share/pear:/opt/alt/php82/usr/share/php:/usr/share/pear:/usr/share/php') in /home/excenvbq/bookkam.com/api/booking-cards.php:2
+Stack trace:
+#0 {main}
+  thrown in /home/excenvbq/bookkam.com/api/booking-cards.php on line 2
+[23-Jul-2026 12:29:14 UTC] PHP Warning:  require_once(../config/db.php): Failed to open stream: No such file or directory in /home/excenvbq/bookkam.com/api/event-config.php on line 2
+[23-Jul-2026 12:29:14 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '../config/db.php' (include_path='.:/opt/alt/php82/usr/share/pear:/opt/alt/php82/usr/share/php:/usr/share/pear:/usr/share/php') in /home/excenvbq/bookkam.com/api/event-config.php:2
+Stack trace:
+#0 {main}
+  thrown in /home/excenvbq/bookkam.com/api/event-config.php on line 2
+[23-Jul-2026 23:11:11 UTC] PHP Fatal error:  Uncaught PDOException: SQLSTATE[42S02]: Base table or view not found: 1146 Table 'excenvbq_bookkam.home_booking_cards' doesn't exist in /home/excenvbq/bookkam.com/api/booking-cards.php:10
+Stack trace:
+#0 /home/excenvbq/bookkam.com/api/booking-cards.php(10): PDO->query()
+#1 {main}
+  thrown in /home/excenvbq/bookkam.com/api/booking-cards.php on line 10
+[23-Jul-2026 23:11:12 UTC] PHP Fatal error:  Uncaught PDOException: SQLSTATE[42S02]: Base table or view not found: 1146 Table 'excenvbq_bookkam.home_booking_cards' doesn't exist in /home/excenvbq/bookkam.com/api/event-config.php:8
+Stack trace:
+#0 /home/excenvbq/bookkam.com/api/event-config.php(8): PDO->prepare()
+#1 {main}
+  thrown in /home/excenvbq/bookkam.com/api/event-config.php on line 8
+[23-Jul-2026 23:11:53 UTC] PHP Fatal error:  Uncaught PDOException: SQLSTATE[42S02]: Base table or view not found: 1146 Table 'excenvbq_bookkam.home_booking_cards' doesn't exist in /home/excenvbq/bookkam.com/api/booking-cards.php:10
+Stack trace:
+#0 /home/excenvbq/bookkam.com/api/booking-cards.php(10): PDO->query()
+#1 {main}
+  thrown in /home/excenvbq/bookkam.com/api/booking-cards.php on line 10
+[23-Jul-2026 23:11:53 UTC] PHP Fatal error:  Uncaught PDOException: SQLSTATE[42S02]: Base table or view not found: 1146 Table 'excenvbq_bookkam.home_booking_cards' doesn't exist in /home/excenvbq/bookkam.com/api/event-config.php:8
+Stack trace:
+#0 /home/excenvbq/bookkam.com/api/event-config.php(8): PDO->prepare()
+#1 {main}
+  thrown in /home/excenvbq/bookkam.com/api/event-config.php on line 8
+[23-Jul-2026 23:25:40 UTC] PHP Fatal error:  Uncaught PDOException: SQLSTATE[42S02]: Base table or view not found: 1146 Table 'excenvbq_bookkam.home_booking_cards' doesn't exist in /home/excenvbq/bookkam.com/api/admin.php:32
+Stack trace:
+#0 /home/excenvbq/bookkam.com/api/admin.php(32): PDO->query()
+#1 {main}
+  thrown in /home/excenvbq/bookkam.com/api/admin.php on line 32
+[24-Jul-2026 00:06:57 UTC] PHP Fatal error:  Uncaught PDOException: SQLSTATE[42S02]: Base table or view not found: 1146 Table 'excenvbq_bookkam.home_booking_cards' doesn't exist in /home/excenvbq/bookkam.com/api/admin.php:64
+Stack trace:
+#0 /home/excenvbq/bookkam.com/api/admin.php(64): PDO->prepare()
+#1 {main}
+  thrown in /home/excenvbq/bookkam.com/api/admin.php on line 64
+[24-Jul-2026 00:06:57 UTC] PHP Fatal error:  Uncaught PDOException: SQLSTATE[42S02]: Base table or view not found: 1146 Table 'excenvbq_bookkam.home_booking_cards' doesn't exist in /home/excenvbq/bookkam.com/api/admin.php:64
+Stack trace:
+#0 /home/excenvbq/bookkam.com/api/admin.php(64): PDO->prepare()
+#1 {main}
+  thrown in /home/excenvbq/bookkam.com/api/admin.php on line 64
+[24-Jul-2026 00:06:57 UTC] PHP Fatal error:  Uncaught PDOException: SQLSTATE[42S02]: Base table or view not found: 1146 Table 'excenvbq_bookkam.home_booking_cards' doesn't exist in /home/excenvbq/bookkam.com/api/admin.php:64
+Stack trace:
+#0 /home/excenvbq/bookkam.com/api/admin.php(64): PDO->prepare()
+#1 {main}
+  thrown in /home/excenvbq/bookkam.com/api/admin.php on line 64
+[24-Jul-2026 00:07:00 UTC] PHP Fatal error:  Uncaught PDOException: SQLSTATE[42S02]: Base table or view not found: 1146 Table 'excenvbq_bookkam.home_booking_cards' doesn't exist in /home/excenvbq/bookkam.com/api/booking-cards.php:10
+Stack trace:
+#0 /home/excenvbq/bookkam.com/api/booking-cards.php(10): PDO->query()
+#1 {main}
+  thrown in /home/excenvbq/bookkam.com/api/booking-cards.php on line 10
+[24-Jul-2026 00:07:01 UTC] PHP Fatal error:  Uncaught PDOException: SQLSTATE[42S02]: Base table or view not found: 1146 Table 'excenvbq_bookkam.home_booking_cards' doesn't exist in /home/excenvbq/bookkam.com/api/event-config.php:8
+Stack trace:
+#0 /home/excenvbq/bookkam.com/api/event-config.php(8): PDO->prepare()
+#1 {main}
+  thrown in /home/excenvbq/bookkam.com/api/event-config.php on line 8
+[24-Jul-2026 00:07:09 UTC] PHP Fatal error:  Uncaught PDOException: SQLSTATE[42S02]: Base table or view not found: 1146 Table 'excenvbq_bookkam.home_booking_cards' doesn't exist in /home/excenvbq/bookkam.com/api/admin.php:64
+Stack trace:
+#0 /home/excenvbq/bookkam.com/api/admin.php(64): PDO->prepare()
+#1 {main}
+  thrown in /home/excenvbq/bookkam.com/api/admin.php on line 64
+[24-Jul-2026 00:07:12 UTC] PHP Fatal error:  Uncaught PDOException: SQLSTATE[42S02]: Base table or view not found: 1146 Table 'excenvbq_bookkam.home_booking_cards' doesn't exist in /home/excenvbq/bookkam.com/api/admin.php:64
+Stack trace:
+#0 /home/excenvbq/bookkam.com/api/admin.php(64): PDO->prepare()
+#1 {main}
+  thrown in /home/excenvbq/bookkam.com/api/admin.php on line 64
+[24-Jul-2026 00:07:20 UTC] PHP Fatal error:  Uncaught PDOException: SQLSTATE[42S02]: Base table or view not found: 1146 Table 'excenvbq_bookkam.home_booking_cards' doesn't exist in /home/excenvbq/bookkam.com/api/admin.php:64
+Stack trace:
+#0 /home/excenvbq/bookkam.com/api/admin.php(64): PDO->prepare()
+#1 {main}
+  thrown in /home/excenvbq/bookkam.com/api/admin.php on line 64

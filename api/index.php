@@ -53,7 +53,7 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
   </div>
 </div>
 
-<!-- ── MODAL ──────────────────────────────────────────────────────────────── -->
+<!-- ── MODAL ─────────────────────────────────────────────────────────────── -->
 <div id="modal-overlay" class="modal-overlay" style="display:none">
   <div id="modal-content" class="modal-box"></div>
 </div>
@@ -61,7 +61,7 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
 
 
 
-<!-- ── TOAST ──────────────────────────────────────────────────────────────── -->
+<!-- ── TOAST ─────────────────────────────────────────────────────────────── -->
 <div id="toast-container"></div>
 
 
@@ -71,16 +71,16 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
   <span class="material-icons-outlined" id="theme-icon">dark_mode</span>
 </button>
 
-<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
 <!-- PAGE: AUTH                                                                 -->
-<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
 <div id="page-auth" class="page active">
   <aside class="home-booking-dock" aria-label="Event booking">
     <div class="home-booking-list" id="home-booking-list"></div>
   </aside>
 
   <div class="login-wrap">
-      
+       
     <div class="login-card">
       <div class="auth-logo-wrap">
         <img src="app/assets/logo.png" alt="BOOKKAM" class="auth-logo-img" id="auth-logo">
@@ -104,7 +104,7 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
         </button>
       </div>
     </div>
-    
+     
   </div>
 
 
@@ -765,6 +765,10 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
     }
 
     function renderSystemCarsEmpty(message, detail) {
+      if (!packageListEl) {
+        console.error("Car list element not found for event:", eventKey);
+        return;
+      }
       packageListEl.innerHTML =
         '<div class="gy-empty-state">' +
           '<strong>' + escapeHTML(message) + '</strong>' +
@@ -774,6 +778,10 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
     }
 
     function renderSystemCars(result) {
+      if (!packageListEl) {
+        console.error("Package list element not found for event:", eventKey);
+        return;
+      }
       var cars = (result && result.cars) || [];
       packageListEl.innerHTML = '';
       selectedSystemCar = null;
@@ -881,7 +889,7 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
         if (isSelected) btn.classList.add('gy-selected');
         btn.innerHTML =
           '<span class="gy-detail-car-thumb"' + (car.photo ? ' style="background-image:url(\'' + car.photo + '\')"' : '') + '>' +
-            (car.photo ? '' : '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 13l1.5-4.5A2 2 0 0 1 6.4 7h11.2a2 2 0 0 1 1.9 1.5L21 13v5a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H6v1a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5z"/><circle cx="7.5" cy="16" r="1.5"/><circle cx="16.5" cy="16" r="1.5"/></svg>') +
+            (car.photo ? '' : '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 13l1.5-4.5A2 2 0 0 1 6.4 7h11.2a2 2 0 0 1 1.9 1.5L21 13M3 13l1 4a2 2 0 0 0 2 1.5h12a2 2 0 0 0 2-1.5l1-4M7 13v3a2 2 0 1 0 4 0v-3m2 0v3a2 2 0 1 0 4 0v-3"></path></svg>') +
           '</span>' +
           '<span class="gy-detail-car-info">' +
             '<span class="gy-detail-car-name">' + car.model + '</span>' +
@@ -890,14 +898,12 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
 
         btn.addEventListener('click', function () {
           selectedCarByPackage[packageId] = { model: car.model, year: car.year };
-          // Reflect the choice on the package card back in the booking view
           var card = packageListEl.querySelector('input[value="' + packageId + '"]').closest('.gy-package-card');
           var selectedLine = card.querySelector('.gy-package-selected-car');
           if (selectedLine) {
             selectedLine.hidden = false;
             selectedLine.textContent = 'Selected: ' + car.model + (car.year ? ' (' + car.year + ')' : '');
           }
-          // Also select this package as the active radio choice
           packageListEl.querySelector('input[value="' + packageId + '"]').checked = true;
           updateSelectedCardStyles();
           closeCarDetail();
@@ -998,7 +1004,7 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
       map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'bottom-right');
       var pinEl = document.createElement('div');
       pinEl.className = 'gy-pin-marker';
-      pinEl.innerHTML = '<svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor"><path d="M12 2C7.58 2 4 5.58 4 10c0 5.42 7 12 8 12s8-6.58 8-12c0-4.42-3.58-8-8-8zm0 10.5A2.5 2.5 0 1 1 12 7.5a2.5 2.5 0 0 1 0 5z"/></svg>';
+      pinEl.innerHTML = '<svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor"><path d="M12 2C7.58 2 4 5.58 4 10c0 5.42 7 12 8 12s8-6.58 8-12c0-4.42-3.58-8-8-8zm0 10.5A2.5 2.5 0 1 1 9.5 10 2.5 2.5 0 0 1 12 12.5z"></path></svg>';
       new mapboxgl.Marker({ element: pinEl, anchor: 'bottom' }).setLngLat([cfg.venue_lng, cfg.venue_lat])
         .setPopup(new mapboxgl.Popup({ offset: 25, closeButton: false }).setHTML('<b>' + cfg.name + '</b><br>Event pickup &amp; drop-off'))
         .addTo(map);
@@ -1021,7 +1027,7 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
       }
 
       if (packageSection) packageSection.hidden = false;
-      packageListEl.innerHTML = '<div class="gy-empty-state"><strong>Loading available cars...</strong><span>Checking the active fleet for Calabar.</span></div>';
+      if (packageListEl) packageListEl.innerHTML = '<div class="gy-empty-state"><strong>Loading available cars...</strong><span>Checking the active fleet for Calabar.</span></div>';
       loadSystemCars().then(renderSystemCars);
       initMap(cfg);
     }
@@ -1148,7 +1154,7 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
         if (carChecked) {
           selectedSystemCar = systemCars.filter(function (car) { return String(car.id) === String(carChecked.value); })[0] || selectedSystemCar;
         }
-        if (!pickup || !dropoff || !zoneLabel || !time || !passengers || !selectedSystemCar) {
+        if (!pickup || !dropoff || !zoneLabel || !date || !time || !passengers || !selectedSystemCar) {
           alert('Please fill in all fields and select a car to complete your booking.');
           return;
         }
@@ -1193,9 +1199,9 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
 
 </div>
 
-<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
 <!-- PAGE: CUSTOMER DASHBOARD                                                   -->
-<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
 <div id="page-customer-dashboard" class="page" style="display:none">
   <div class="dashboard-layout">
     <aside class="sidebar" id="customer-sidebar"></aside>
@@ -1217,9 +1223,9 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
   <nav class="mobile-nav" id="customer-mobile-nav"></nav>
 </div>
 
-<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
 <!-- PAGE: DRIVER DASHBOARD                                                     -->
-<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
 <div id="page-driver-dashboard" class="page" style="display:none">
   <div class="dashboard-layout">
     <aside class="sidebar" id="driver-sidebar"></aside>
@@ -1238,9 +1244,9 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
   <nav class="mobile-nav" id="driver-mobile-nav"></nav>
 </div>
 
-<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
 <!-- PAGE: ADMIN DASHBOARD                                                      -->
-<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
 <div id="page-admin-dashboard" class="page" style="display:none">
   <div class="dashboard-layout">
     <aside class="sidebar" id="admin-sidebar"></aside>
@@ -1265,9 +1271,9 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
   </div>
 </div>
 
-<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
 <!-- PAGE: UNDER REVIEW                                                         -->
-<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
 <div id="page-under-review" class="page" style="display:none">
   <div id="under-review-content"></div>
 </div>

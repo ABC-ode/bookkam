@@ -1,4 +1,4 @@
-// ── ADMIN.JS ──────────────────────────────────────────────────────────────────
+// ── ADMIN.JS ───────────────────────────────────────────────────────────────
 
 function adminEscapeHTML(value) {
   return String(value == null ? "" : value).replace(/[&<>"']/g, ch => ({
@@ -72,7 +72,7 @@ function adminTab(name, el) {
   if (handlers[name]) handlers[name]();
 }
 
-// ── DASHBOARD ─────────────────────────────────────────────────────────────────
+// ── DASHBOARD ──────────────────────────────────────────────────────────────
 async function loadAdminHome() {
   const el = document.getElementById("tab-admin-dashboard");
   el.innerHTML = `<div class="page-header"><h2>Dashboard</h2></div><div style="padding:0 20px">${shimmerCards(4)}</div>`;
@@ -99,9 +99,9 @@ async function loadAdminHome() {
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
     <div class="card">
       <div class="section-label" style="margin-bottom:12px">Pending Actions</div>
-      ${s.pending_drivers>0?`<div class="alert-item" onclick="adminTab('drivers')"><span class="material-icons-outlined" style="color:var(--orange)">person_pin</span>${s.pending_drivers} driver${s.pending_drivers>1?"s":""} awaiting approval</div>`:""}
-      ${s.pending_media>0?`<div class="alert-item" onclick="adminTab('media')"><span class="material-icons-outlined" style="color:var(--orange)">photo_library</span>${s.pending_media} photo${s.pending_media>1?"s":""} awaiting review</div>`:""}
-      ${s.flagged_messages>0?`<div class="alert-item" onclick="adminTab('chats')"><span class="material-icons-outlined" style="color:var(--fire)">warning</span>${s.flagged_messages} flagged message${s.flagged_messages>1?"s":""}</div>`:""}
+      ${s.pending_drivers>0?`<div class="alert-item" onclick="adminTab('drivers')"><span class="material-icons-outlined" style="color:var(--orange)">person_pin</span>${s.pending_drivers} driver${s.pending_drivers!==1?"s":""} awaiting approval</div>`:""}
+      ${s.pending_media>0?`<div class="alert-item" onclick="adminTab('media')"><span class="material-icons-outlined" style="color:var(--orange)">photo_library</span>${s.pending_media} photo${s.pending_media!==1?"s":""} to review</div>`:""}
+      ${s.flagged_messages>0?`<div class="alert-item" onclick="adminTab('chats')"><span class="material-icons-outlined" style="color:var(--fire)">warning</span>${s.flagged_messages} flagged message${s.flagged_messages!==1?"s":""}</div>`:""}
       ${!s.pending_drivers&&!s.pending_media&&!s.flagged_messages?`<div style="color:var(--muted);font-size:13px">All clear! No pending actions.</div>`:""}
     </div>
     <div class="card">
@@ -113,7 +113,7 @@ async function loadAdminHome() {
   </div>`;
 }
 
-// ── CARS MANAGEMENT ───────────────────────────────────────────────────────────
+// ── CARS MANAGEMENT ────────────────────────────────────────────────────────
 async function loadAdminCars() {
   const el = document.getElementById("tab-admin-cars");
   el.innerHTML = `
@@ -157,7 +157,7 @@ async function loadCarsList(type) {
     <div class="flex-between">
       <div style="display:flex;gap:12px;align-items:center">
         ${c.main_photo?`<img src="${c.main_photo}" style="width:60px;height:60px;border-radius:8px;object-fit:cover;flex-shrink:0">`:
-          `<div style="width:60px;height:60px;border-radius:8px;background:var(--card-dark);display:flex;align-items:center;justify-content:center;flex-shrink:0"><span class="material-icons-outlined" style="color:var(--dim)">directions_car</span></div>`}
+          `<div style="width:60px;height:60px;border-radius:8px;background:var(--card-dark);display:flex;align-items:center;justify-content:center;flex-shrink:0"><span class="material-icons-outlined">directions_car</span></div>`}
         <div>
           <div style="font-weight:700">${c.name}</div>
           <div style="font-size:12px;color:var(--muted)">${c.make||""} ${c.model||""} ${c.year||""} · ${c.plate_number||""}</div>
@@ -173,6 +173,7 @@ async function loadCarsList(type) {
           ${c.availability_status==="available"?"Mark In Use":"Mark Available"}
         </button>`:
         `<button class="btn btn-sm btn-ghost" onclick="showDriverAssignModal(${c.id})">Assign Driver</button>`}
+        <button class="btn btn-sm btn-ghost" onclick="showEditCarModal(${c.id})"><span class="material-icons-outlined" style="font-size:14px">edit</span> Edit</button>
         <button class="btn btn-sm btn-ghost" onclick="showSurgePricingModal(${c.id},${c.surge_multiplier||1})">Surge: ${c.surge_multiplier||1}x</button>
       </div>
     </div>
@@ -260,7 +261,7 @@ function showAddCarModal(carType) {
     <h3>Add ${carType==="self_drive"?"Self-Drive":"Chauffeur"} Car</h3>
     <button class="modal-close" onclick="closeModal()"><span class="material-icons-outlined">close</span></button>
   </div>
-  <div class="modal-body">
+  <div class="modal-body" style="max-height:80vh;overflow-y:auto">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
       <div class="input-group"><label>Car Name *</label><input class="input-field" id="ac-name" placeholder="e.g. Toyota Camry 2021"></div>
       <div class="input-group"><label>Make</label><input class="input-field" id="ac-make" placeholder="Toyota"></div>
@@ -305,14 +306,111 @@ function showAddCarModal(carType) {
       <div class="input-group"><label>Daily Mileage Limit (km)</label><input type="number" class="input-field" id="ac-mileage" placeholder="200 (0 = unlimited)"></div>
       `:`<div class="input-group"><label>Driver ID (optional)</label><input type="number" class="input-field" id="ac-driver" placeholder="Leave blank to assign later"></div>`}
     </div>
+    
+    <!-- IMAGE UPLOAD -->
+    <div class="input-group">
+      <label>Car Image</label>
+      <input type="file" class="input-field" id="ac-image-file" accept="image/jpeg,image/png,image/webp" onchange="adminUploadCarImage()">
+      <input type="hidden" id="ac-image-url">
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+        <button type="button" class="btn btn-sm btn-ghost" onclick="document.getElementById('ac-image-file')?.click()">
+          <span class="material-icons-outlined">cloud_upload</span> Upload Image
+        </button>
+        <span id="ac-image-status" style="font-size:12px;color:var(--muted)">No image uploaded</span>
+      </div>
+      <div id="ac-image-preview" style="margin-top:8px;height:80px;border-radius:8px;background:var(--card-dark);display:flex;align-items:center;justify-content:center;overflow:hidden"></div>
+    </div>
+    
+    <!-- LOCATION PRICING -->
+    <div class="input-group">
+      <label>Per-Location Pricing (optional)</label>
+      <div style="background:var(--card-dark);border-radius:8px;padding:12px;margin-bottom:12px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Add pricing for each location. Leave empty to use base pricing.</div>
+        <div id="ac-location-pricing-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:8px"></div>
+        <button type="button" class="btn btn-sm btn-ghost" onclick="addLocationPricingRow()">
+          <span class="material-icons-outlined" style="font-size:16px">add</span> Add Location Price
+        </button>
+      </div>
+    </div>
+    
     <div class="input-group"><label>Description</label><textarea class="input-field" id="ac-desc" rows="3" placeholder="Brief description of the car..."></textarea></div>
     <button class="btn btn-gold btn-full" onclick="adminAddCar('${carType}')">
       <span class="material-icons-outlined">add</span> Add Car
     </button>
   </div>`);
+  
+  // Initialize location pricing rows
+  document.getElementById("ac-location-pricing-list").innerHTML = "";
+  addLocationPricingRow();
+}
+
+function addLocationPricingRow() {
+  const container = document.getElementById("ac-location-pricing-list");
+  if (!container) return;
+  const rowId = Date.now();
+  const row = document.createElement("div");
+  row.id = `price-row-${rowId}`;
+  row.style.display = "flex";
+  row.style.gap = "6px";
+  row.innerHTML = `
+    <input type="text" class="input-field" placeholder="e.g. Municipal" style="flex:1;font-size:13px;padding:8px" data-location>
+    <input type="number" class="input-field" placeholder="₦ price" style="flex:1;font-size:13px;padding:8px" data-price min="0">
+    <button type="button" class="btn btn-sm btn-ghost-red" onclick="document.getElementById('price-row-${rowId}').remove()">
+      <span class="material-icons-outlined" style="font-size:16px">delete</span>
+    </button>
+  `;
+  container.appendChild(row);
+}
+
+async function adminUploadCarImage() {
+  const input = document.getElementById("ac-image-file");
+  const file = input?.files?.[0];
+  if (!file) return;
+  if (!file.type.startsWith("image/")) { showToast("Choose an image file","error"); input.value = ""; return; }
+  if (file.size > 5*1024*1024) { showToast("Max 5MB","error"); input.value = ""; return; }
+  
+  const status = document.getElementById("ac-image-status");
+  const preview = document.getElementById("ac-image-preview");
+  const urlInput = document.getElementById("ac-image-url");
+  
+  if (status) status.textContent = "Uploading...";
+  try {
+    const cfg = await api("/admin.php?action=get_cloudinary_upload_config");
+    if (cfg.error) throw new Error(cfg.error);
+    
+    const form = new FormData();
+    form.append("file", file);
+    form.append("upload_preset", cfg.upload_preset);
+    
+    const res = await fetch(`https://api.cloudinary.com/v1_1/${encodeURIComponent(cfg.cloud_name)}/image/upload`, {
+      method: "POST", body: form
+    });
+    const data = await res.json();
+    if (!res.ok || !data.secure_url) throw new Error(data.error?.message || "Upload failed");
+    
+    if (urlInput) urlInput.value = data.secure_url;
+    if (preview) preview.innerHTML = `<img src="${data.secure_url}" style="width:100%;height:100%;object-fit:cover">`;
+    if (status) status.textContent = "✓ Uploaded";
+    showToast("Image uploaded","success");
+  } catch(err) {
+    if (status) status.textContent = "Upload failed";
+    showToast(err.message || "Upload failed","error");
+  } finally {
+    input.value = "";
+  }
 }
 
 async function adminAddCar(carType) {
+  // Collect location pricing
+  const locationPricing = [];
+  document.querySelectorAll("#ac-location-pricing-list [data-location]").forEach(el => {
+    const location = el.value.trim();
+    const price = parseFloat(el.parentElement.querySelector("[data-price]")?.value || 0);
+    if (location && price > 0) {
+      locationPricing.push({ location, price });
+    }
+  });
+  
   const data = await api("/cars.php?action=admin_add","POST",{
     name:         document.getElementById("ac-name").value.trim(),
     car_type:     carType,
@@ -330,6 +428,8 @@ async function adminAddCar(carType) {
     security_deposit:       parseFloat(document.getElementById("ac-deposit")?.value||0),
     mileage_limit_per_day:  parseInt(document.getElementById("ac-mileage")?.value||0),
     driver_id:              parseInt(document.getElementById("ac-driver")?.value||0)||null,
+    main_photo:             document.getElementById("ac-image-url")?.value || "",
+    location_pricing:       locationPricing,
   });
   if (data.error) { showToast(data.error,"error"); return; }
   closeModal();
@@ -337,7 +437,91 @@ async function adminAddCar(carType) {
   loadCarsList("all");
 }
 
-// ── DRIVERS ───────────────────────────────────────────────────────────────────
+function showEditCarModal(carId) {
+  showModal(`
+  <div class="modal-header">
+    <h3>Edit Car</h3>
+    <button class="modal-close" onclick="closeModal()"><span class="material-icons-outlined">close</span></button>
+  </div>
+  <div class="modal-body" id="edit-car-body" style="max-height:80vh;overflow-y:auto">Loading...</div>`);
+  
+  api(`/cars.php?action=admin_get_one&id=${carId}`).then(data => {
+    if (data.error) { showToast(data.error,"error"); closeModal(); return; }
+    const c = data.car;
+    const pricing = (c.location_pricing && typeof c.location_pricing === 'string') ? JSON.parse(c.location_pricing) : (c.location_pricing || []);
+    
+    document.getElementById("edit-car-body").innerHTML = `
+    <div class="input-group"><label>Car Name</label><input class="input-field" id="ec-name" value="${adminEscapeHTML(c.name||"")}"></div>
+    
+    <div class="input-group">
+      <label>Per-Location Pricing</label>
+      <div style="background:var(--card-dark);border-radius:8px;padding:12px;margin-bottom:12px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Add or edit pricing for each location.</div>
+        <div id="ec-pricing-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:8px"></div>
+        <button type="button" class="btn btn-sm btn-ghost" onclick="addEditLocationPricingRow()">
+          <span class="material-icons-outlined">add</span> Add Location Price
+        </button>
+      </div>
+    </div>
+    
+    <button class="btn btn-gold btn-full" onclick="adminSaveCarEdit(${carId})">Save Changes</button>
+    `;
+    
+    const pricingList = document.getElementById("ec-pricing-list");
+    pricing.forEach(p => {
+      const row = document.createElement("div");
+      row.style.display = "flex";
+      row.style.gap = "6px";
+      row.innerHTML = `
+        <input type="text" class="input-field" value="${adminEscapeHTML(p.location || "")}" style="flex:1;font-size:13px;padding:8px" data-location>
+        <input type="number" class="input-field" value="${p.price || 0}" style="flex:1;font-size:13px;padding:8px" data-price min="0">
+        <button type="button" class="btn btn-sm btn-ghost-red" onclick="this.parentElement.remove()">
+          <span class="material-icons-outlined" style="font-size:16px">delete</span>
+        </button>
+      `;
+      pricingList.appendChild(row);
+    });
+  });
+}
+
+function addEditLocationPricingRow() {
+  const rowId = Date.now();
+  const row = document.createElement("div");
+  row.id = `ec-price-row-${rowId}`;
+  row.style.display = "flex";
+  row.style.gap = "6px";
+  row.innerHTML = `
+    <input type="text" class="input-field" placeholder="e.g. 8 Miles" style="flex:1;font-size:13px;padding:8px" data-location>
+    <input type="number" class="input-field" placeholder="₦ price" style="flex:1;font-size:13px;padding:8px" data-price min="0">
+    <button type="button" class="btn btn-sm btn-ghost-red" onclick="document.getElementById('ec-price-row-${rowId}').remove()">
+      <span class="material-icons-outlined" style="font-size:16px">delete</span>
+    </button>
+  `;
+  document.getElementById("ec-pricing-list").appendChild(row);
+}
+
+async function adminSaveCarEdit(carId) {
+  const locationPricing = [];
+  document.querySelectorAll("#ec-pricing-list > div").forEach(row => {
+    const location = row.querySelector("[data-location]").value.trim();
+    const price = parseFloat(row.querySelector("[data-price]").value || 0);
+    if (location && price > 0) {
+      locationPricing.push({ location, price });
+    }
+  });
+  
+  const data = await api("/cars.php?action=admin_update","POST",{
+    car_id: carId,
+    name: document.getElementById("ec-name")?.value.trim() || "",
+    location_pricing: locationPricing
+  });
+  if (data.error) { showToast(data.error,"error"); return; }
+  closeModal();
+  showToast("Car updated","success");
+  loadCarsList("all");
+}
+
+// ── DRIVERS ────────────────────────────────────────────────────────────────
 async function loadAdminDrivers() {
   const el = document.getElementById("tab-admin-drivers");
   el.innerHTML = `
@@ -383,7 +567,7 @@ async function updateDriverStatus(driverId, status) {
   loadDriversList("");
 }
 
-// ── BOOKINGS ──────────────────────────────────────────────────────────────────
+// ── BOOKINGS ──────────────────────────────────────────────────────────────
 async function loadAdminBookings() {
   const el = document.getElementById("tab-admin-bookings");
   el.innerHTML = `
@@ -420,10 +604,10 @@ async function loadAdminEventBookings(status = "awaiting_confirmation") {
     <div class="flex-between" style="align-items:flex-start;gap:12px">
       <div>
         <div style="font-weight:700">#EV${b.id} · ${adminEscapeHTML(b.event_name)}</div>
-        <div style="font-size:12px;color:var(--muted)">${adminEscapeHTML(b.date_display || b.event_date)} · ${adminEscapeHTML(String(b.pickup_time || "").slice(0,5))} · ${Number(b.passengers || 1)} passenger(s)</div>
+        <div style="font-size:12px;color:var(--muted)">${adminEscapeHTML(b.date_display || b.event_date)} · ${adminEscapeHTML(String(b.pickup_time || "").slice(0,5))} · ${Number(b.passengers || 0)} passenger(s)</div>
         <div style="font-size:12px;color:var(--muted)">Pickup: ${adminEscapeHTML(b.pickup_address)}</div>
         <div style="font-size:12px;color:var(--muted)">Drop-off: ${adminEscapeHTML(b.dropoff_address)}</div>
-        <div style="font-size:12px;color:var(--muted)">Zone: ${adminEscapeHTML(b.pickup_zone)} · ${adminEscapeHTML(b.ride_type)} ${b.package_id ? "· " + adminEscapeHTML(b.package_id) : ""}${b.bus_route_id ? "· " + adminEscapeHTML(b.bus_route_id) : ""}</div>
+        <div style="font-size:12px;color:var(--muted)">Zone: ${adminEscapeHTML(b.pickup_zone)} · ${adminEscapeHTML(b.ride_type)} ${b.package_id ? "· " + adminEscapeHTML(b.package_id) : ""}${b.booking_type ? " · " + adminEscapeHTML(b.booking_type) : ""}</div>
         ${b.selected_car ? `<div style="font-size:12px;color:var(--muted)">Car: ${adminEscapeHTML(b.selected_car)}</div>` : ""}
         ${b.discount_code ? `<div style="font-size:12px;color:var(--gold)">Discount code assigned: ${adminEscapeHTML(b.discount_code)} (${Number(b.discount_percent || 0)}%)</div>` : ""}
       </div>
@@ -514,7 +698,7 @@ async function submitDamageReport(bookingId) {
   showToast("Damage report submitted","success");
 }
 
-// ── MEDIA ─────────────────────────────────────────────────────────────────────
+// ── MEDIA ──────────────────────────────────────────────────────────────────
 async function loadAdminMedia() {
   const el = document.getElementById("tab-admin-media");
   el.innerHTML = `<div class="page-header"><h2>Media <span>Review</span></h2></div><div style="padding:0 20px" id="media-list">${shimmerCards(4)}</div>`;
@@ -547,7 +731,7 @@ async function reviewMedia(id, status) {
   loadAdminMedia();
 }
 
-// ── CHAT MONITOR ──────────────────────────────────────────────────────────────
+// ── CHAT MONITOR ──────────────────────────────────────────────────────────
 async function loadAdminChats() {
   const el = document.getElementById("tab-admin-chats");
   el.innerHTML = `
@@ -611,7 +795,7 @@ async function openAdminChatView(bookingId) {
   el.scrollTop = el.scrollHeight;
 }
 
-// ── CUSTOMERS ─────────────────────────────────────────────────────────────────
+// ── CUSTOMERS ──────────────────────────────────────────────────────────────
 async function loadAdminCustomers() {
   const el = document.getElementById("tab-admin-customers");
   el.innerHTML = `<div class="page-header"><h2>Customers</h2></div><div style="padding:0 20px" id="customers-list">${shimmerCards(3)}</div>`;
@@ -645,7 +829,7 @@ async function blacklistCustomer(customerId) {
   loadAdminCustomers();
 }
 
-// ── REVENUE ───────────────────────────────────────────────────────────────────
+// ── REVENUE ───────────────────────────────────────────────────────────────
 async function loadAdminRevenue() {
   const el = document.getElementById("tab-admin-revenue");
   el.innerHTML = `<div class="page-header"><h2>Revenue</h2></div><div style="padding:0 20px" id="revenue-body">${shimmerCards(2)}</div>`;
@@ -668,7 +852,7 @@ async function loadAdminRevenue() {
   </div>`;
 }
 
-// ── PAYOUTS ───────────────────────────────────────────────────────────────────
+// ── PAYOUTS ───────────────────────────────────────────────────────────────
 async function loadAdminPayouts() {
   const el = document.getElementById("tab-admin-payouts");
   el.innerHTML = `<div class="page-header"><h2>Driver <span>Payouts</span></h2></div><div style="padding:0 20px" id="payouts-list">${shimmerCards(3)}</div>`;
@@ -701,7 +885,7 @@ async function markPayoutPaid(id) {
   loadAdminPayouts();
 }
 
-// ── PRICING ───────────────────────────────────────────────────────────────────
+// ── PRICING ───────────────────────────────────────────────────────────────
 async function loadAdminPricing() {
   const el = document.getElementById("tab-admin-pricing");
   el.innerHTML = `<div class="page-header"><h2>Pricing</h2></div><div style="padding:0 20px" id="pricing-list">${shimmerCards(3)}</div>`;
@@ -733,7 +917,7 @@ async function savePricing(id) {
   showToast("Pricing updated","success");
 }
 
-// ── PROMOS ────────────────────────────────────────────────────────────────────
+// ── PROMOS ────────────────────────────────────────────────────────────────
 async function loadAdminPromos() {
   const el = document.getElementById("tab-admin-promos");
   el.innerHTML = `
@@ -784,7 +968,7 @@ async function createPromo() {
   loadAdminPromos();
 }
 
-// ── HOME BOOKING CARD ─────────────────────────────────────────────────────────
+// ── HOME BOOKING CARD ──────────────────────────────────────────────────────
 async function loadAdminBookingCard() {
   const el = document.getElementById("tab-admin-booking-card");
   el.innerHTML = `
@@ -839,7 +1023,7 @@ async function loadAdminBookingCard() {
           </button>
           <span id="home-card-upload-status" style="font-size:12px;color:var(--muted)">${card.image_url ? "Image uploaded" : "No image uploaded"}</span>
         </div>
-        <input class="input-field" id="home-card-image-display" value="${adminEscapeHTML(card.image_url || "")}" readonly placeholder="Cloudinary URL appears here" style="margin-top:8px;font-size:12px">
+        <input class="input-field" id="home-card-image-display" value="${adminEscapeHTML(card.image_url || "")}" readonly placeholder="Cloudinary URL appears here" style="margin-top:8px;font-size:11px">
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div class="input-group">
@@ -961,7 +1145,7 @@ async function uploadHomeBookingCardImage() {
   }
 }
 
-// ── CITIES ────────────────────────────────────────────────────────────────────
+// ── CITIES ────────────────────────────────────────────────────────────────
 async function loadAdminCities() {
   const el = document.getElementById("tab-admin-cities");
   el.innerHTML = `

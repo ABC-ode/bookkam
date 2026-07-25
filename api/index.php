@@ -116,10 +116,19 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
     <button type="button" class="gy-close" aria-label="Close event booking popup">&#10005;</button>
 
     <div class="gy-modal-inner">
+<!-- Access gate (hidden unless config.requires_access_code is true) -->
+   <div class="gy-access-gate" hidden>
+     <h2 class="gy-title">Enter your access code</h2>
+     <p class="gy-subtitle">This event requires a code to book transport.</p>
+     <div class="gy-field">
+       <label>Access code</label>
+       <input type="text" class="gy-code-input" placeholder="e.g. CODE2026" autocomplete="off" />
+     </div>
+     <button type="button" class="gy-submit gy-code-submit">Unlock booking</button>
+     <p class="gy-success gy-code-error" role="status" aria-live="polite"></p>
+   </div>
 
-      <!-- Access gate (hidden unless config.requires_access_code is true) -->
-   
-      <!-- Main booking view -->
+   <!-- Main booking view -->
       <div class="gy-booking-view">
         <header class="gy-header">
           <span class="gy-eyebrow gy-dyn-eyebrow">Mon, Jul 13 · Event shuttle</span>

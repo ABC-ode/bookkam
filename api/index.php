@@ -186,6 +186,15 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
             <input type="number" class="gy-passengers-input" min="1" max="6" value="1" required />
           </div>
 
+          <div class="gy-field">
+            <label>Discount code <span class="gy-label-note">(optional)</span></label>
+            <div style="display:flex;gap:8px">
+              <input type="text" class="gy-discount-input" placeholder="Have a code?" autocomplete="off" />
+              <button type="button" class="gy-submit gy-discount-apply-btn" style="flex:0 0 auto;padding:0 16px">Apply</button>
+            </div>
+            <p class="gy-success gy-discount-msg" role="status" aria-live="polite"></p>
+          </div>
+
           <button type="submit" class="gy-submit gy-submit-btn">Book Now</button>
           <p class="gy-success gy-booking-success" role="status" aria-live="polite"></p>
         </form>
@@ -213,18 +222,7 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
 
     <div class="gy-modal-inner">
 
-      <div class="gy-access-gate">
-        <h2 class="gy-title">Enter your access code</h2>
-        <p class="gy-subtitle">This event requires a code to book transport.</p>
-        <div class="gy-field">
-          <label>Access code</label>
-          <input type="text" class="gy-code-input" placeholder="e.g. CARIB2026" autocomplete="off" />
-        </div>
-        <button type="button" class="gy-submit gy-code-submit">Unlock booking</button>
-        <p class="gy-success gy-code-error" role="status" aria-live="polite"></p>
-      </div>
-
-      <div class="gy-booking-view" hidden>
+      <div class="gy-booking-view">
         <header class="gy-header">
           <span class="gy-eyebrow gy-dyn-eyebrow">Sun, Jul 26 · Event shuttle</span>
           <h2 id="gyTitle-carribbeanvibes" class="gy-title gy-dyn-title">Event Transport – Carribbean Vibes</h2>
@@ -287,6 +285,15 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
           <div class="gy-field">
             <label>Number of passengers</label>
             <input type="number" class="gy-passengers-input" min="1" max="6" value="1" required />
+          </div>
+
+          <div class="gy-field">
+            <label>Discount code <span class="gy-label-note">(optional)</span></label>
+            <div style="display:flex;gap:8px">
+              <input type="text" class="gy-discount-input" placeholder="Have a code?" autocomplete="off" />
+              <button type="button" class="gy-submit gy-discount-apply-btn" style="flex:0 0 auto;padding:0 16px">Apply</button>
+            </div>
+            <p class="gy-success gy-discount-msg" role="status" aria-live="polite"></p>
           </div>
 
           <button type="submit" class="gy-submit gy-submit-btn">Book Now</button>
@@ -554,7 +561,6 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
   .gy-submit:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
   .gy-submit:disabled { opacity: 0.6; cursor: not-allowed; }
 
-  .gy-access-gate { display: flex; flex-direction: column; gap: 1rem; }
 
   @media (max-width: 480px) {
     .gy-row-2 { grid-template-columns: 1fr; }
@@ -599,12 +605,11 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
   };
 
   var CONFIG_ENDPOINT = '/api/event-config.php';
-  var CODE_ENDPOINT = '/api/validate-access-code.php';
+  var PROMO_ENDPOINT = '/api/promo-code.php';
   var BOOKING_ENDPOINT = '/api/event-booking.php';
   var GY_TOKEN = "pk.eyJ1IjoiYm9va2thbSIsImEiOiJjbW5uYXRyaXYxZm9lMnByNjc1OHNycG5vIn0.zUAwUDojhM0ROm2l58J4kg";
 
-  var unlockedEvents = {};   // eventKey -> true once a valid code has been entered
-  var discountByEvent = {};  // eventKey -> discount_percent from the code used
+  var discountByEvent = {};  // eventKey -> discount_percent from an applied discount code
   var loadedConfigs = {};    // eventKey -> config object once fetched
   var mapInstances = {};     // overlayId -> mapbox map instance
   var lastFocusedEl = null;
@@ -698,7 +703,6 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
     var eventKey = overlay.dataset.eventKey;
     var modal = overlay.querySelector('.gy-modal');
     var closeBtn = overlay.querySelector('.gy-close');
-    var accessGate = overlay.querySelector('.gy-access-gate');
     var bookingView = overlay.querySelector('.gy-booking-view');
     var detailView = overlay.querySelector('.gy-car-detail-view');
     var form = overlay.querySelector('.gy-form');
@@ -1023,7 +1027,7 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
       var discountBanner = overlay.querySelector('.gy-discount-banner');
       if (discountBanner && discountByEvent[eventKey]) {
         discountBanner.hidden = false;
-        discountBanner.textContent = '🎉 ' + discountByEvent[eventKey] + '% discount applied with your access code';
+        discountBanner.textContent = '🎉 ' + discountByEvent[eventKey] + '% discount applied';
       }
 
       if (packageSection) packageSection.hidden = false;
@@ -1032,49 +1036,49 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
       initMap(cfg);
     }
 
-    // ── Access code gate ─────────────────────────────────────────────────
-    var codeInput = overlay.querySelector('.gy-code-input');
-    var codeSubmit = overlay.querySelector('.gy-code-submit');
-    var codeError = overlay.querySelector('.gy-code-error');
+    // ── Optional discount code (never blocks booking) ──────────────────────
+    var discountInput = overlay.querySelector('.gy-discount-input');
+    var discountBtn = overlay.querySelector('.gy-discount-apply-btn');
+    var discountMsg = overlay.querySelector('.gy-discount-msg');
 
-    function attemptUnlock(cfg) {
-      var code = codeInput.value.trim();
-      if (!code) { codeError.classList.add('gy-error'); codeError.textContent = 'Enter a code to continue.'; return; }
-      codeSubmit.disabled = true;
-      codeSubmit.textContent = 'Checking…';
-      fetch(CODE_ENDPOINT, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event: eventKey, code: code })
-      })
+    function applyDiscountCode() {
+      var code = discountInput.value.trim();
+      if (!code) {
+        discountByEvent[eventKey] = 0;
+        discountMsg.classList.remove('gy-error');
+        discountMsg.textContent = '';
+        return;
+      }
+      discountBtn.disabled = true;
+      discountBtn.textContent = 'Checking…';
+      fetch(PROMO_ENDPOINT + '?code=' + encodeURIComponent(code))
         .then(function (r) { return r.json(); })
         .then(function (data) {
-          if (data && data.success) {
-            unlockedEvents[eventKey] = true;
-            discountByEvent[eventKey] = data.discount_percent || 0;
-            accessGate.hidden = true;
-            bookingView.hidden = false;
-            populateModal(cfg);
+          if (data && data.success && data.discount_percent) {
+            discountByEvent[eventKey] = data.discount_percent;
+            discountMsg.classList.remove('gy-error');
+            discountMsg.textContent = '🎉 ' + data.discount_percent + '% discount applied';
           } else {
-            codeError.classList.add('gy-error');
-            codeError.textContent = (data && data.error) || 'Invalid code.';
+            discountByEvent[eventKey] = 0;
+            discountMsg.classList.add('gy-error');
+            discountMsg.textContent = (data && data.error) || 'Invalid or expired code.';
           }
         })
         .catch(function () {
-          codeError.classList.add('gy-error');
-          codeError.textContent = 'Could not verify code — try again.';
+          discountByEvent[eventKey] = 0;
+          discountMsg.classList.add('gy-error');
+          discountMsg.textContent = 'Could not verify code — try again.';
         })
         .finally(function () {
-          codeSubmit.disabled = false;
-          codeSubmit.textContent = 'Unlock booking';
+          discountBtn.disabled = false;
+          discountBtn.textContent = 'Apply';
         });
     }
 
-    if (codeSubmit) {
-      codeSubmit.addEventListener('click', function () {
-        fetchConfig(eventKey).then(attemptUnlock);
-      });
-      codeInput.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') { e.preventDefault(); fetchConfig(eventKey).then(attemptUnlock); }
+    if (discountBtn) {
+      discountBtn.addEventListener('click', applyDiscountCode);
+      discountInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); applyDiscountCode(); }
       });
     }
 
@@ -1145,7 +1149,8 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
           pickup_lng: pickupLng.value || null, pickup_lat: pickupLat.value || null,
           dropoff_address: dropoff,
           zone: zone, zone_label: zoneLabel, date: date, date_display: dateDisplay, time: time, passengers: passengers,
-          ride_type: rideType, discount_percent: discountByEvent[eventKey] || 0
+          ride_type: rideType, discount_percent: discountByEvent[eventKey] || 0,
+          discount_code: (discountInput && discountInput.value.trim()) || null
         };
 
         var carChecked = form.querySelector('input[name="car-' + eventKey + '"]:checked');

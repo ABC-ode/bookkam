@@ -278,8 +278,14 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
           </div>
 
           <div class="gy-field gy-package-section">
-            <label>Car <span class="gy-label-note">(from available fleet)</span></label>
-            <div class="gy-package-list" role="radiogroup" aria-label="Select a car"></div>
+            <label>Package <span class="gy-label-note">(choose a tier, then pick your car)</span></label>
+            <div class="gy-package-with-frame">
+              <div class="gy-package-list" role="radiogroup" aria-label="Select a package"></div>
+              <div class="gy-selected-car-frame" hidden>
+                <img class="gy-selected-car-frame-img" alt="Selected car" />
+                <span class="gy-selected-car-frame-label"></span>
+              </div>
+            </div>
           </div>
 
           <div class="gy-field">
@@ -499,6 +505,20 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
   .gy-package-price { font-size: 0.95rem; font-weight: 800; color: #E8420A; white-space: nowrap; }
   .gy-negotiate-link { font-size: 0.85rem; font-weight: 700; color: #25D366; white-space: nowrap; text-decoration: none; display: inline-flex; align-items: center; gap: 2px; }
   .gy-negotiate-link:hover { text-decoration: underline; }
+  .gy-package-with-frame { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+  .gy-package-with-frame .gy-package-list { flex: 1 1 220px; min-width: 0; }
+  .gy-selected-car-frame {
+    flex: 0 0 128px; width: 128px; border-radius: 14px; border: 2px solid #E8420A;
+    background: #0A0F1E; overflow: hidden; text-align: center;
+    box-shadow: 0 6px 18px rgba(232,66,10,0.25); animation: gySelectedCarFadeIn 0.25s ease;
+  }
+  .gy-selected-car-frame-img { width: 100%; height: 90px; object-fit: cover; display: block; background: #1a2236; }
+  .gy-selected-car-frame-label { display: block; font-size: 0.72rem; font-weight: 700; color: #fff; padding: 6px 8px; line-height: 1.2; }
+  @keyframes gySelectedCarFadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  @media (max-width: 420px) {
+    .gy-selected-car-frame { flex-basis: 100%; width: 100%; display: flex; align-items: center; gap: 10px; text-align: left; }
+    .gy-selected-car-frame-img { width: 72px; height: 54px; flex: 0 0 auto; }
+  }
   .gy-package-tagline { font-size: 0.78rem; color: #9BA1B4; }
   .gy-package-cars-line { font-size: 0.75rem; color: #7C8299; }
   .gy-package-selected-car { font-size: 0.78rem; color: #FFD27A; font-weight: 600; }
@@ -611,6 +631,7 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
   var BOOKING_ENDPOINT = '/api/event-booking.php';
   var PAYMENT_ENDPOINT = '/api/payments.php';
   var PUBLIC_CONFIG_ENDPOINT = '/api/public-config.php';
+  var PACKAGES_ENDPOINT = '/api/event-packages.php';
   var GY_TOKEN = "pk.eyJ1IjoiYm9va2thbSIsImEiOiJjbW5uYXRyaXYxZm9lMnByNjc1OHNycG5vIn0.zUAwUDojhM0ROm2l58J4kg";
 
   var WHATSAPP_NUMBER = '2348000000000'; // overwritten below once /api/public-config.php responds
@@ -710,6 +731,10 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
 
   document.querySelectorAll('.gy-overlay').forEach(function (overlay) {
     var eventKey = overlay.dataset.eventKey;
+    var IS_PACKAGE_EVENT = (eventKey === 'carribbeanvibes');
+    var loadedPackages = [];
+    var selectedPackageKey = null;
+    var selectedCarByPackage = {};
     var modal = overlay.querySelector('.gy-modal');
     var closeBtn = overlay.querySelector('.gy-close');
     var bookingView = overlay.querySelector('.gy-booking-view');
@@ -785,6 +810,111 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
           if (data.error) throw new Error(data.error);
           return data.cars || [];
         });
+    }
+
+    // ── Package tiers (Carribbean Vibes only): Diamond/Gold/Silver/Party Bus ──
+    function packageLocationPrice(pkg) {
+      var chosen = currentZoneLabel().trim().toLowerCase();
+      var list = (pkg && pkg.location_pricing) || [];
+      for (var i = 0; i < list.length; i++) {
+        var loc = (list[i].location || '').trim().toLowerCase();
+        if (loc && (loc === chosen || chosen.indexOf(loc) !== -1 || loc.indexOf(chosen) !== -1)) {
+          return Number(list[i].price);
+        }
+      }
+      return null;
+    }
+
+    function packageWhatsappLink(pkg) {
+      var msg = "Hi, I'd like to negotiate a price for the " + (pkg.name || 'package') +
+        " package for " + (overlay.querySelector('.gy-dyn-title') ? overlay.querySelector('.gy-dyn-title').textContent : 'my event') +
+        ". My pickup zone is " + currentZoneLabel() + ".";
+      return 'https://wa.me/' + WHATSAPP_NUMBER + '?text=' + encodeURIComponent(msg);
+    }
+
+    function loadPackages() {
+      return fetch(PACKAGES_ENDPOINT + '?action=get_all&event=' + encodeURIComponent(eventKey))
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (data.error) throw new Error(data.error);
+          return data.packages || [];
+        });
+    }
+
+    function renderPackages(packages) {
+      loadedPackages = packages || [];
+      if (!packageListEl) return;
+      packageListEl.innerHTML = '';
+
+      if (!loadedPackages.length) {
+        packageListEl.innerHTML =
+          '<div class="gy-empty-state">' +
+            '<strong>No packages configured yet</strong>' +
+            '<span>Ask an admin to add a package for this event.</span>' +
+          '</div>';
+        return;
+      }
+
+      loadedPackages.forEach(function (pkg, i) {
+        var locationPrice = packageLocationPrice(pkg);
+        var priceHTML = locationPrice !== null
+          ? formatNaira(locationPrice)
+          : '<a href="' + packageWhatsappLink(pkg) + '" target="_blank" rel="noopener" class="gy-negotiate-link" onclick="event.stopPropagation()">Negotiate <span class="material-icons-outlined" style="font-size:14px;vertical-align:-2px">chat</span></a>';
+
+        var card = document.createElement('label');
+        card.className = 'gy-package-card';
+        card.innerHTML =
+          '<input type="radio" name="package-' + eventKey + '" value="' + pkg.package_key + '"' + (i === 0 ? ' checked' : '') + ' />' +
+          '<span class="gy-package-top">' +
+            '<span class="gy-package-name">' + escapeHTML(pkg.name) + (pkg.tagline ? ' <small style="font-weight:400;opacity:.7">— ' + escapeHTML(pkg.tagline) + '</small>' : '') + '</span>' +
+            '<span class="gy-package-price" data-package-price-for="' + pkg.package_key + '">' + priceHTML + '</span>' +
+          '</span>' +
+          '<span class="gy-package-selected-car" hidden></span>' +
+          '<button type="button" class="btn btn-sm btn-ghost gy-choose-car-btn" style="margin-top:8px">Choose your car (' + pkg.cars.length + ' available)</button>';
+
+        card.querySelector('.gy-choose-car-btn').addEventListener('click', function (e) {
+          e.preventDefault();
+          card.querySelector('input').checked = true;
+          selectedPackageKey = pkg.package_key;
+          updateSelectedCardStyles();
+          openCarDetail(pkg.package_key);
+        });
+
+        card.querySelector('input').addEventListener('change', function () {
+          selectedPackageKey = pkg.package_key;
+          updateSelectedCardStyles();
+        });
+
+        packageListEl.appendChild(card);
+      });
+
+      selectedPackageKey = loadedPackages[0].package_key;
+      updateSelectedCardStyles();
+    }
+
+    function updatePackagePrices() {
+      loadedPackages.forEach(function (pkg) {
+        var label = packageListEl.querySelector('[data-package-price-for="' + pkg.package_key + '"]');
+        if (!label) return;
+        var locationPrice = packageLocationPrice(pkg);
+        if (locationPrice !== null) {
+          label.textContent = formatNaira(locationPrice);
+        } else {
+          label.innerHTML = '<a href="' + packageWhatsappLink(pkg) + '" target="_blank" rel="noopener" class="gy-negotiate-link" onclick="event.stopPropagation()">Negotiate <span class="material-icons-outlined" style="font-size:14px;vertical-align:-2px">chat</span></a>';
+        }
+      });
+    }
+
+    function selectedPackagePrice() {
+      if (!selectedPackageKey) return null;
+      var pkg = loadedPackages.filter(function (p) { return p.package_key === selectedPackageKey; })[0];
+      return pkg ? packageLocationPrice(pkg) : null;
+    }
+
+    function selectedPackageNeedsNegotiate() {
+      if (!selectedPackageKey) return false;
+      var pkg = loadedPackages.filter(function (p) { return p.package_key === selectedPackageKey; })[0];
+      return !!pkg && packageLocationPrice(pkg) === null;
     }
 
     function loadSystemCars() {
@@ -924,8 +1054,8 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
     }
 
     // ── Car detail / picker view ──────────────────────────────────────────
-    function openCarDetail(cfg, packageId) {
-      var pkg = cfg.packages.filter(function (p) { return p.id === packageId; })[0];
+    function openCarDetail(packageKey) {
+      var pkg = loadedPackages.filter(function (p) { return p.package_key === packageKey; })[0];
       if (!pkg) return;
 
       var detailTitle = detailView.querySelector('.gy-detail-title');
@@ -937,7 +1067,7 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
         var btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'gy-detail-car-card';
-        var isSelected = selectedCarByPackage[packageId] && selectedCarByPackage[packageId].model === car.model && selectedCarByPackage[packageId].year === car.year;
+        var isSelected = selectedCarByPackage[packageKey] && selectedCarByPackage[packageKey].model === car.model && selectedCarByPackage[packageKey].year === car.year;
         if (isSelected) btn.classList.add('gy-selected');
         btn.innerHTML =
           '<span class="gy-detail-car-thumb"' + (car.photo ? ' style="background-image:url(\'' + car.photo + '\')"' : '') + '>' +
@@ -949,15 +1079,18 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
           '</span>';
 
         btn.addEventListener('click', function () {
-          selectedCarByPackage[packageId] = { model: car.model, year: car.year };
-          var card = packageListEl.querySelector('input[value="' + packageId + '"]').closest('.gy-package-card');
+          selectedCarByPackage[packageKey] = { model: car.model, year: car.year, photo: car.photo || '' };
+
+          var card = packageListEl.querySelector('input[value="' + packageKey + '"]').closest('.gy-package-card');
           var selectedLine = card.querySelector('.gy-package-selected-car');
           if (selectedLine) {
             selectedLine.hidden = false;
             selectedLine.textContent = 'Selected: ' + car.model + (car.year ? ' (' + car.year + ')' : '');
           }
-          packageListEl.querySelector('input[value="' + packageId + '"]').checked = true;
+          packageListEl.querySelector('input[value="' + packageKey + '"]').checked = true;
+          selectedPackageKey = packageKey;
           updateSelectedCardStyles();
+          updateSelectedCarFrame();
           closeCarDetail();
         });
 
@@ -968,6 +1101,26 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
       detailView.hidden = false;
       var backBtn = detailView.querySelector('.gy-back-btn');
       if (backBtn) backBtn.focus();
+    }
+
+    // Shows the currently selected car's photo in the aesthetic frame beside the package list
+    function updateSelectedCarFrame() {
+      var frame = overlay.querySelector('.gy-selected-car-frame');
+      if (!frame) return;
+      var chosen = selectedPackageKey ? selectedCarByPackage[selectedPackageKey] : null;
+      if (!chosen) { frame.hidden = true; return; }
+
+      var img = frame.querySelector('.gy-selected-car-frame-img');
+      var label = frame.querySelector('.gy-selected-car-frame-label');
+      if (chosen.photo) {
+        img.src = chosen.photo;
+        img.style.display = '';
+      } else {
+        img.removeAttribute('src');
+        img.style.display = 'none';
+      }
+      label.textContent = chosen.model + (chosen.year ? ' (' + chosen.year + ')' : '');
+      frame.hidden = false;
     }
 
     function closeCarDetail() {
@@ -1040,7 +1193,9 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
       });
     });
     if (pickupZoneInput) {
-      pickupZoneInput.addEventListener('input', function () { updateCarPrices(systemCars); });
+      pickupZoneInput.addEventListener('input', function () {
+        if (IS_PACKAGE_EVENT) { updatePackagePrices(); } else { updateCarPrices(systemCars); }
+      });
       pickupZoneInput.value = 'Municipal & Calabar South';
     }
 
@@ -1079,8 +1234,15 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
       }
 
       if (packageSection) packageSection.hidden = false;
-      if (packageListEl) packageListEl.innerHTML = '<div class="gy-empty-state"><strong>Loading available cars...</strong><span>Checking the active fleet for Calabar.</span></div>';
-      loadSystemCars().then(renderSystemCars);
+      if (IS_PACKAGE_EVENT) {
+        if (packageListEl) packageListEl.innerHTML = '<div class="gy-empty-state"><strong>Loading packages...</strong><span>Fetching Carribbean Vibes packages.</span></div>';
+        loadPackages().then(renderPackages).catch(function () {
+          if (packageListEl) packageListEl.innerHTML = '<div class="gy-empty-state"><strong>Could not load packages</strong><span>Please try again shortly.</span></div>';
+        });
+      } else {
+        if (packageListEl) packageListEl.innerHTML = '<div class="gy-empty-state"><strong>Loading available cars...</strong><span>Checking the active fleet for Calabar.</span></div>';
+        loadSystemCars().then(renderSystemCars);
+      }
       initMap(cfg);
     }
 
@@ -1201,22 +1363,42 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
           discount_code: (discountInput && discountInput.value.trim()) || null
         };
 
-        var carChecked = form.querySelector('input[name="car-' + eventKey + '"]:checked');
-        if (carChecked) {
-          selectedSystemCar = systemCars.filter(function (car) { return String(car.id) === String(carChecked.value); })[0] || selectedSystemCar;
+        if (IS_PACKAGE_EVENT) {
+          var pkgChecked = form.querySelector('input[name="package-' + eventKey + '"]:checked');
+          if (pkgChecked) selectedPackageKey = pkgChecked.value;
+          var chosenCar = selectedPackageKey ? selectedCarByPackage[selectedPackageKey] : null;
+
+          if (!pickup || !dropoff || !zoneLabel || !date || !time || !passengers || !selectedPackageKey || !chosenCar) {
+            alert('Please fill in all fields, choose a package, and pick your car to complete your booking.');
+            return;
+          }
+          if (selectedPackageNeedsNegotiate()) {
+            var pkgForWhatsapp = loadedPackages.filter(function (p) { return p.package_key === selectedPackageKey; })[0];
+            window.open(packageWhatsappLink(pkgForWhatsapp || { name: selectedPackageKey }), '_blank', 'noopener');
+            return;
+          }
+          payload.car_id = null;
+          payload.package = selectedPackageKey;
+          payload.selected_car = chosenCar.model + (chosenCar.year ? ' (' + chosenCar.year + ')' : '');
+          payload.price = selectedPackagePrice();
+        } else {
+          var carChecked = form.querySelector('input[name="car-' + eventKey + '"]:checked');
+          if (carChecked) {
+            selectedSystemCar = systemCars.filter(function (car) { return String(car.id) === String(carChecked.value); })[0] || selectedSystemCar;
+          }
+          if (!pickup || !dropoff || !zoneLabel || !date || !time || !passengers || !selectedSystemCar) {
+            alert('Please fill in all fields and select a car to complete your booking.');
+            return;
+          }
+          if (selectedCarNeedsNegotiate()) {
+            window.open(whatsappLink(selectedSystemCar), '_blank', 'noopener');
+            return;
+          }
+          payload.car_id = selectedSystemCar.id;
+          payload.selected_car = carDisplayName(selectedSystemCar);
+          payload.package = null;
+          payload.price = selectedCarPrice();
         }
-        if (!pickup || !dropoff || !zoneLabel || !date || !time || !passengers || !selectedSystemCar) {
-          alert('Please fill in all fields and select a car to complete your booking.');
-          return;
-        }
-        if (selectedCarNeedsNegotiate()) {
-          window.open(whatsappLink(selectedSystemCar), '_blank', 'noopener');
-          return;
-        }
-        payload.car_id = selectedSystemCar.id;
-        payload.selected_car = carDisplayName(selectedSystemCar);
-        payload.package = null;
-        payload.price = selectedCarPrice();
 
         submitBtn.disabled = true; submitBtn.textContent = 'Booking…';
         successMsg.classList.remove('gy-error'); successMsg.textContent = '';

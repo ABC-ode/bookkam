@@ -96,6 +96,26 @@ switch ($action) {
         respond(["pricing" => $s->fetchAll()]);
     }
 
+    // ── Admin: get one car (with location pricing) for the edit modal ────────
+    case "admin_get_one": {
+        if (!$user || $user["role"] !== "admin") respondError("Admin access required", 403);
+        $id = (int)($_GET["id"] ?? 0);
+        if (!$id) respondError("Car ID required");
+
+        $s = $pdo->prepare("SELECT c.*,
+            (SELECT url FROM car_media WHERE car_id=c.id AND status='approved' AND media_type='photo' ORDER BY sort_order LIMIT 1) as main_photo
+            FROM cars c WHERE c.id=?");
+        $s->execute([$id]);
+        $car = $s->fetch();
+        if (!$car) respondError("Car not found", 404);
+
+        $lp = $pdo->prepare("SELECT location, price FROM car_location_pricing WHERE car_id=?");
+        $lp->execute([$id]);
+        $car["location_pricing"] = array_map(function ($r) { return ["location" => $r["location"], "price" => (float)$r["price"]]; }, $lp->fetchAll());
+
+        respond(["car" => $car]);
+    }
+
     // ── Admin: add a car ──────────────────────────────────────────────────────
     case "admin_add": {
         if (!$user || $user["role"] !== "admin") respondError("Admin access required", 403);

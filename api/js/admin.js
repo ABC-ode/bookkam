@@ -362,16 +362,17 @@ function addLocationPricingRow() {
   container.appendChild(row);
 }
 
-async function adminUploadCarImage() {
-  const input = document.getElementById("ac-image-file");
+async function adminUploadCarImage(prefix) {
+  prefix = prefix || "ac";
+  const input = document.getElementById(prefix + "-image-file");
   const file = input?.files?.[0];
   if (!file) return;
   if (!file.type.startsWith("image/")) { showToast("Choose an image file","error"); input.value = ""; return; }
   if (file.size > 5*1024*1024) { showToast("Max 5MB","error"); input.value = ""; return; }
   
-  const status = document.getElementById("ac-image-status");
-  const preview = document.getElementById("ac-image-preview");
-  const urlInput = document.getElementById("ac-image-url");
+  const status = document.getElementById(prefix + "-image-status");
+  const preview = document.getElementById(prefix + "-image-preview");
+  const urlInput = document.getElementById(prefix + "-image-url");
   
   if (status) status.textContent = "Uploading...";
   try {
@@ -452,7 +453,20 @@ function showEditCarModal(carId) {
     
     document.getElementById("edit-car-body").innerHTML = `
     <div class="input-group"><label>Car Name</label><input class="input-field" id="ec-name" value="${adminEscapeHTML(c.name||"")}"></div>
-    
+
+    <div class="input-group">
+      <label>Car Image</label>
+      <input type="file" class="input-field" id="ec-image-file" accept="image/jpeg,image/png,image/webp" onchange="adminUploadCarImage('ec')">
+      <input type="hidden" id="ec-image-url" value="${adminEscapeHTML(c.main_photo||"")}">
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+        <button type="button" class="btn btn-sm btn-ghost" onclick="document.getElementById('ec-image-file')?.click()">
+          <span class="material-icons-outlined">cloud_upload</span> ${c.main_photo?"Replace Image":"Upload Image"}
+        </button>
+        <span id="ec-image-status" style="font-size:12px;color:var(--muted)">${c.main_photo?"Current image set":"No image uploaded"}</span>
+      </div>
+      <div id="ec-image-preview" style="margin-top:8px;height:80px;border-radius:8px;background:var(--card-dark);display:flex;align-items:center;justify-content:center;overflow:hidden">${c.main_photo?`<img src="${c.main_photo}" style="width:100%;height:100%;object-fit:cover">`:""}</div>
+    </div>
+
     <div class="input-group">
       <label>Per-Location Pricing</label>
       <div style="background:var(--card-dark);border-radius:8px;padding:12px;margin-bottom:12px">
@@ -511,8 +525,9 @@ async function adminSaveCarEdit(carId) {
   });
   
   const data = await api("/cars.php?action=admin_update","POST",{
-    car_id: carId,
+    id: carId,
     name: document.getElementById("ec-name")?.value.trim() || "",
+    main_photo: document.getElementById("ec-image-url")?.value || "",
     location_pricing: locationPricing
   });
   if (data.error) { showToast(data.error,"error"); return; }

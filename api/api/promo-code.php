@@ -16,6 +16,10 @@ if (!empty($promo["expiry_date"]) && strtotime($promo["expiry_date"]) < strtotim
     respondError("This code has expired");
 }
 
+if ($promo["max_uses"] !== null && (int)$promo["used_count"] >= (int)$promo["max_uses"]) {
+    respondError("This code has reached its usage limit");
+}
+
 respond([
     "success" => true,
     "code" => $promo["code"],

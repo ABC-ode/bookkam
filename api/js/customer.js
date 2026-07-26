@@ -607,7 +607,14 @@ async function createRideBooking(carId, city) {
 }
 
 // ── PAYMENT MODAL ─────────────────────────────────────────────────────────────
-function openPaymentModal(bookingId, total) {
+async function openPaymentModal(bookingId, total, bookingType) {
+  bookingType = bookingType || "website";
+  let methods = { paystack: true, opay: false };
+  try {
+    const m = await api("/payments.php?action=get_methods");
+    if (!m.error) methods = m;
+  } catch (e) { /* fall back to defaults above */ }
+
   showModal(`
   <div class="modal-header">
     <h3>Complete Payment</h3>
@@ -619,31 +626,37 @@ function openPaymentModal(bookingId, total) {
       <div style="font-family:'Cormorant Garamond',serif;font-size:48px;font-weight:300;color:var(--gold)">${fmt(total)}</div>
     </div>
     <div style="display:grid;gap:10px">
-      <button class="btn btn-ghost btn-full" onclick="payBooking(${bookingId},'cash')">
+      <button class="btn btn-ghost btn-full" onclick="payBooking(${bookingId},'cash','${bookingType}')">
         <span class="material-icons-outlined">payments</span> Pay Cash to Driver
       </button>
-      <button class="btn btn-ghost btn-full" onclick="payBooking(${bookingId},'wallet')">
+      ${bookingType === "website" ? `
+      <button class="btn btn-ghost btn-full" onclick="payBooking(${bookingId},'wallet','${bookingType}')">
         <span class="material-icons-outlined">account_balance_wallet</span> Pay from Wallet
-      </button>
-      <button class="btn btn-ghost btn-full" onclick="payBooking(${bookingId},'card')">
+      </button>` : ""}
+      <button class="btn btn-ghost btn-full" onclick="payBooking(${bookingId},'paystack','${bookingType}')">
         <span class="material-icons-outlined">credit_card</span> Pay with Card (Paystack)
       </button>
-      <button class="btn btn-test btn-full" onclick="simulatePayment(${bookingId})">
+      ${methods.opay ? `
+      <button class="btn btn-ghost btn-full" onclick="payBooking(${bookingId},'opay','${bookingType}')">
+        <span class="material-icons-outlined">credit_card</span> Pay with Opay
+      </button>` : ""}
+      <button class="btn btn-test btn-full" onclick="simulatePayment(${bookingId},'${bookingType}')">
         <span class="material-icons-outlined">science</span> Simulate Payment (Test Mode)
       </button>
     </div>
   </div>`);
 }
 
-async function payBooking(bookingId, method) {
-  const data = await api("/payments.php?action=initiate","POST",{ booking_id:bookingId, method });
+async function payBooking(bookingId, method, bookingType) {
+  const data = await api("/payments.php?action=initiate","POST",{ booking_id:bookingId, method, booking_type: bookingType || "website" });
   if (data.error) { showToast(data.error,"error"); return; }
   if (data.authorization_url) { window.location.href = data.authorization_url; return; }
   closeModal();
   showToast(data.message||"Payment recorded!","success");
   loadMyBookings();
 }
-async function simulatePayment(bookingId) { await payBooking(bookingId,"test"); }
+async function simulatePayment(bookingId, bookingType) { await payBooking(bookingId,"test", bookingType); }
+
 
 // ── MY BOOKINGS ───────────────────────────────────────────────────────────────
 // ── WISHLIST TOGGLE ───────────────────────────────────────────────────────────

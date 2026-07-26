@@ -37,7 +37,20 @@ switch ($action) {
         $sql .= " ORDER BY c.id DESC";
         $s = $pdo->prepare($sql);
         $s->execute($params);
-        respond(["cars" => $s->fetchAll()]);
+        $cars = $s->fetchAll();
+
+        if ($cars) {
+            $ids = array_column($cars, "id");
+            $placeholders = implode(",", array_fill(0, count($ids), "?"));
+            $lp = $pdo->prepare("SELECT car_id, location, price FROM car_location_pricing WHERE car_id IN ($placeholders)");
+            $lp->execute($ids);
+            $byCarId = [];
+            foreach ($lp->fetchAll() as $row) { $byCarId[$row["car_id"]][] = ["location" => $row["location"], "price" => (float)$row["price"]]; }
+            foreach ($cars as &$c) { $c["location_pricing"] = $byCarId[$c["id"]] ?? []; }
+            unset($c);
+        }
+
+        respond(["cars" => $cars]);
     }
 
     // ── Get one car with full details ─────────────────────────────────────────
@@ -63,6 +76,10 @@ switch ($action) {
         $ps = $pdo->prepare("SELECT * FROM pricing WHERE city=?");
         $ps->execute([$car["city"]]);
         $car["pricing"] = $ps->fetchAll();
+
+        $lp = $pdo->prepare("SELECT location, price FROM car_location_pricing WHERE car_id=?");
+        $lp->execute([$id]);
+        $car["location_pricing"] = array_map(function ($r) { return ["location" => $r["location"], "price" => (float)$r["price"]]; }, $lp->fetchAll());
 
         respond(["car" => $car]);
     }
@@ -98,6 +115,8 @@ switch ($action) {
         $deposit      = (float)($input["security_deposit"] ?? 0);
         $driverId     = (int)($input["driver_id"] ?? 0);
         $description  = $input["description"]   ?? "";
+        $mainPhoto    = trim($input["main_photo"] ?? "");
+        $locationPricing = is_array($input["location_pricing"] ?? null) ? $input["location_pricing"] : [];
 
         if (!$name || !$plate) respondError("name and plate_number required");
 
@@ -109,7 +128,23 @@ switch ($action) {
                 $transmission,$fuel,$seats,$mileageLimit,$deposit,
                 $driverId ?: null,$description]);
 
-        respond(["success"=>true,"id"=>$pdo->lastInsertId()]);
+        $carId = (int)$pdo->lastInsertId();
+
+        if ($mainPhoto) {
+            $pdo->prepare("INSERT INTO car_media (car_id,media_type,url,status,sort_order) VALUES (?,?,?,?,?)")
+                ->execute([$carId, "photo", $mainPhoto, "approved", 0]);
+        }
+
+        foreach ($locationPricing as $lp) {
+            $loc = trim($lp["location"] ?? "");
+            $price = (float)($lp["price"] ?? 0);
+            if ($loc && $price > 0) {
+                $pdo->prepare("INSERT INTO car_location_pricing (car_id,location,price) VALUES (?,?,?)")
+                    ->execute([$carId, $loc, $price]);
+            }
+        }
+
+        respond(["success"=>true,"id"=>$carId]);
     }
 
     // ── Admin: update car ─────────────────────────────────────────────────────
@@ -124,9 +159,29 @@ switch ($action) {
         foreach ($fields as $f) {
             if (array_key_exists($f, $input)) { $sets[] = "$f=?"; $vals[] = $input[$f]; }
         }
-        if (!$sets) respondError("Nothing to update");
-        $vals[] = $id;
-        $pdo->prepare("UPDATE cars SET ".implode(",",$sets)." WHERE id=?")->execute($vals);
+        if ($sets) {
+            $vals[] = $id;
+            $pdo->prepare("UPDATE cars SET ".implode(",",$sets)." WHERE id=?")->execute($vals);
+        }
+
+        if (array_key_exists("main_photo", $input) && trim($input["main_photo"])) {
+            $pdo->prepare("DELETE FROM car_media WHERE car_id=? AND media_type='photo'")->execute([$id]);
+            $pdo->prepare("INSERT INTO car_media (car_id,media_type,url,status,sort_order) VALUES (?,?,?,?,?)")
+                ->execute([$id, "photo", trim($input["main_photo"]), "approved", 0]);
+        }
+
+        if (is_array($input["location_pricing"] ?? null)) {
+            $pdo->prepare("DELETE FROM car_location_pricing WHERE car_id=?")->execute([$id]);
+            foreach ($input["location_pricing"] as $lp) {
+                $loc = trim($lp["location"] ?? "");
+                $price = (float)($lp["price"] ?? 0);
+                if ($loc && $price > 0) {
+                    $pdo->prepare("INSERT INTO car_location_pricing (car_id,location,price) VALUES (?,?,?)")
+                        ->execute([$id, $loc, $price]);
+                }
+            }
+        }
+
         respond(["success"=>true]);
     }
 

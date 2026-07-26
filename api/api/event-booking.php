@@ -56,7 +56,7 @@ try {
         (event_key,event_name,pickup_address,dropoff_address,pickup_zone,normalized_zone,pickup_lng,pickup_lat,
          event_date,date_display,pickup_time,passengers,ride_type,package_id,bus_route_id,car_id,selected_car,
          price,discount_code,discount_percent,final_price,status)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'awaiting_confirmation')");
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'pending')");
     $stmt->execute([
         $eventKey,$eventName,$pickup,$dropoff,$zoneLabel,$normalizedZone,$pickupLng,$pickupLat,
         $date,$dateDisplay,$time,$passengers,$rideType,$package ?: null,$busRoute ?: null,$carId ?: null,$selectedCar ?: null,
@@ -68,7 +68,7 @@ try {
     respond([
         "success" => true,
         "booking_id" => $bookingId,
-        "status" => "awaiting_confirmation",
+        "status" => "pending",
         "discount_code" => $discountCode,
         "discount_percent" => $discountPercent,
         "price" => $price,

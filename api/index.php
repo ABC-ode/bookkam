@@ -609,6 +609,7 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
   var CONFIG_ENDPOINT = '/api/event-config.php';
   var PROMO_ENDPOINT = '/api/promo-code.php';
   var BOOKING_ENDPOINT = '/api/event-booking.php';
+  var PAYMENT_ENDPOINT = '/api/payments.php';
   var PUBLIC_CONFIG_ENDPOINT = '/api/public-config.php';
   var GY_TOKEN = "pk.eyJ1IjoiYm9va2thbSIsImEiOiJjbW5uYXRyaXYxZm9lMnByNjc1OHNycG5vIn0.zUAwUDojhM0ROm2l58J4kg";
 
@@ -1226,8 +1227,9 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
           .then(function (r) { if (!r.ok) throw new Error('bad response'); return r.json().catch(function () { return {}; }); })
           .then(function (data) {
             var discountLine = data.discount_code ? ' · Discount code: ' + data.discount_code : '';
-            successMsg.textContent = 'Booking received. Awaiting admin confirmation · ' + formatNaira(data.final_price || payload.price) +
+            successMsg.textContent = 'Booking received (#' + data.booking_id + ') · ' + formatNaira(data.final_price || payload.price) +
               ' · ' + dateDisplay + ' at ' + time + discountLine;
+            if (data.booking_id) renderEventPaymentOptions(data.booking_id, data.final_price || payload.price);
           })
           .catch(function () {
             successMsg.classList.add('gy-error');
@@ -1236,6 +1238,72 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
           .finally(function () { submitBtn.disabled = false; submitBtn.textContent = 'Book Now'; });
       });
     });
+
+    // ── Payment step (shown after a booking is created) ────────────────────
+    // The booking already exists at this point with status "pending" — payment
+    // here only ever moves it to "confirmed". Closing the modal without paying
+    // leaves it pending for an admin to follow up on.
+    function renderEventPaymentOptions(bookingId, amount) {
+      var existing = overlay.querySelector('.gy-payment-box');
+      if (existing) existing.remove();
+
+      var box = document.createElement('div');
+      box.className = 'gy-payment-box';
+      box.style.cssText = 'margin-top:16px;padding:14px;border-radius:10px;background:rgba(255,255,255,0.04);display:flex;flex-direction:column;gap:8px';
+      box.innerHTML = '<div style="font-size:13px;opacity:0.8">Pay now to confirm instantly, or leave this and we\u2019ll confirm manually:</div>' +
+        '<div class="gy-pay-buttons" style="display:flex;gap:8px;flex-wrap:wrap"></div>' +
+        '<p class="gy-success gy-payment-msg" role="status" aria-live="polite"></p>';
+      submitBtn.insertAdjacentElement('afterend', box);
+      var btnRow = box.querySelector('.gy-pay-buttons');
+      var payMsg = box.querySelector('.gy-payment-msg');
+      submitBtn.style.display = 'none';
+
+      function addPayButton(label, method) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'gy-submit';
+        b.style.cssText = 'flex:1 1 auto;min-width:120px';
+        b.textContent = label;
+        b.addEventListener('click', function () {
+          b.disabled = true;
+          var original = b.textContent;
+          b.textContent = 'Processing…';
+          fetch(PAYMENT_ENDPOINT + '?action=initiate', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ booking_id: bookingId, booking_type: 'event', method: method })
+          })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+              if (data && data.authorization_url) { window.location.href = data.authorization_url; return; }
+              if (data && data.error) {
+                payMsg.classList.add('gy-error');
+                payMsg.textContent = data.error;
+                return;
+              }
+              payMsg.classList.remove('gy-error');
+              payMsg.textContent = data.status === 'confirmed'
+                ? '✅ Payment received — your booking is confirmed!'
+                : (data.message || 'Recorded — your booking stays pending until confirmed.');
+              btnRow.querySelectorAll('button').forEach(function (x) { x.disabled = true; });
+            })
+            .catch(function () {
+              payMsg.classList.add('gy-error');
+              payMsg.textContent = 'Could not start payment — try again.';
+            })
+            .finally(function () { b.disabled = false; b.textContent = original; });
+        });
+        btnRow.appendChild(b);
+      }
+
+      addPayButton('Pay Cash to Driver', 'cash');
+      fetch(PAYMENT_ENDPOINT + '?action=get_methods')
+        .then(function (r) { return r.json(); })
+        .then(function (methods) {
+          if (methods && methods.paystack) addPayButton('Pay with Card (Paystack)', 'paystack');
+          if (methods && methods.opay) addPayButton('Pay with Opay', 'opay');
+        })
+        .catch(function () { addPayButton('Pay with Card (Paystack)', 'paystack'); });
+    }
 
     // expose opener for the trigger buttons below
     overlay._gyOpen = openOverlay;

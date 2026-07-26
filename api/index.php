@@ -634,7 +634,7 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
   var PACKAGES_ENDPOINT = '/api/event-packages.php';
   var GY_TOKEN = "pk.eyJ1IjoiYm9va2thbSIsImEiOiJjbW5uYXRyaXYxZm9lMnByNjc1OHNycG5vIn0.zUAwUDojhM0ROm2l58J4kg";
 
-  var WHATSAPP_NUMBER = '2348000000000'; // overwritten below once /api/public-config.php responds
+  var WHATSAPP_NUMBER = '2349164812347'; // overwritten below once /api/public-config.php responds
   fetch(PUBLIC_CONFIG_ENDPOINT).then(function (r) { return r.json(); }).then(function (data) {
     if (data && data.whatsapp_support) WHATSAPP_NUMBER = data.whatsapp_support;
   }).catch(function () {});

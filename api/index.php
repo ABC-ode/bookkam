@@ -1559,6 +1559,7 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
       <div class="tab-body">
         <div class="tab-content" id="tab-admin-dashboard"></div>
         <div class="tab-content" id="tab-admin-cars"       style="display:none"></div>
+        <div class="tab-content" id="tab-admin-event-packages" style="display:none"></div>
         <div class="tab-content" id="tab-admin-drivers"    style="display:none"></div>
         <div class="tab-content" id="tab-admin-bookings"   style="display:none"></div>
         <div class="tab-content" id="tab-admin-media"      style="display:none"></div>

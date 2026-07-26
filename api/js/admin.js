@@ -23,6 +23,7 @@ function renderAdminSidebar() {
   <ul class="sidebar-nav">
     <li><a class="active" onclick="adminTab('dashboard',this)"><span class="material-icons-outlined">dashboard</span><span class="nav-label">Dashboard</span></a></li>
     <li><a onclick="adminTab('cars',this)"><span class="material-icons-outlined">directions_car</span><span class="nav-label">Cars</span></a></li>
+    <li><a onclick="adminTab('event-packages',this)"><span class="material-icons-outlined">local_activity</span><span class="nav-label">Event Packages</span></a></li>
     <li><a onclick="adminTab('drivers',this)"><span class="material-icons-outlined">person_pin</span><span class="nav-label">Drivers</span></a></li>
     <li><a onclick="adminTab('bookings',this)"><span class="material-icons-outlined">receipt_long</span><span class="nav-label">Bookings</span></a></li>
     <li><a onclick="adminTab('media',this)"><span class="material-icons-outlined">photo_library</span><span class="nav-label">Media</span></a></li>
@@ -57,6 +58,7 @@ function adminTab(name, el) {
   const handlers = {
     dashboard: loadAdminHome,
     cars:      loadAdminCars,
+    "event-packages": loadAdminEventPackages,
     drivers:   loadAdminDrivers,
     bookings:  loadAdminBookings,
     media:     loadAdminMedia,
@@ -534,6 +536,325 @@ async function adminSaveCarEdit(carId) {
   closeModal();
   showToast("Car updated","success");
   loadCarsList("all");
+}
+
+// ── EVENT PACKAGES ────────────────────────────────────────────────────────
+// Admin-managed package tiers (e.g. Diamond/Gold/Silver/Party Bus) shown in
+// package-based event booking modals. Each package needs at least one car
+// and one location price to actually be bookable — otherwise customers only
+// ever see the "Negotiate via WhatsApp" fallback for it.
+const EVENT_PACKAGE_EVENTS = [
+  { key: "carribbeanvibes", label: "Carribbean Vibes" },
+  { key: "grovveyard", label: "Grovve Yard" },
+];
+let currentEventPackagesKey = "carribbeanvibes";
+let eventPackagesCache = [];
+
+async function loadAdminEventPackages(eventKey) {
+  if (eventKey) currentEventPackagesKey = eventKey;
+  const el = document.getElementById("tab-admin-event-packages");
+  const activeLabel = EVENT_PACKAGE_EVENTS.find(e => e.key === currentEventPackagesKey)?.label || currentEventPackagesKey;
+  el.innerHTML = `
+  <div class="page-header"><h2>Event <span>Packages</span></h2></div>
+  <div style="padding:0 20px">
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+      <div style="display:flex;gap:8px">
+        ${EVENT_PACKAGE_EVENTS.map(ev => `<button class="btn btn-sm ${ev.key === currentEventPackagesKey ? "btn-gold" : "btn-ghost"}" onclick="loadAdminEventPackages('${ev.key}')">${adminEscapeHTML(ev.label)}</button>`).join("")}
+      </div>
+      <button class="btn btn-sm btn-gold" style="margin-left:auto" onclick="showAddEventPackageModal()">
+        <span class="material-icons-outlined">add</span> Add Package
+      </button>
+    </div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:18px">
+      Packages shown in the <strong>${adminEscapeHTML(activeLabel)}</strong> booking modal. A package with no location price for a customer's zone shows "Negotiate" with a WhatsApp link instead of a price.
+    </p>
+    <div id="admin-event-packages-list">${shimmerCards(2)}</div>
+  </div>`;
+  loadEventPackagesList();
+}
+
+async function loadEventPackagesList() {
+  const el = document.getElementById("admin-event-packages-list");
+  if (!el) return;
+  el.innerHTML = shimmerCards(2);
+  const data = await api(`/event-packages.php?action=admin_get_all&event=${encodeURIComponent(currentEventPackagesKey)}`);
+  if (data.error) { el.innerHTML = `<div style="text-align:center;padding:28px;color:var(--muted)">${adminEscapeHTML(data.error)}</div>`; return; }
+  eventPackagesCache = data.packages || [];
+  if (!eventPackagesCache.length) {
+    el.innerHTML = `<div style="text-align:center;padding:40px;color:var(--muted)">No packages yet for this event. Add one to get started.</div>`;
+    return;
+  }
+  el.innerHTML = eventPackagesCache.map(pkg => `
+  <div class="card" style="margin-bottom:14px">
+    <div class="flex-between" style="align-items:flex-start;margin-bottom:10px">
+      <div>
+        <div style="font-weight:700;font-size:16px">${adminEscapeHTML(pkg.name)}</div>
+        ${pkg.tagline ? `<div style="font-size:12px;color:var(--muted)">${adminEscapeHTML(pkg.tagline)}</div>` : ""}
+        <div style="font-size:11px;color:var(--muted);font-family:'Space Mono',monospace">key: ${adminEscapeHTML(pkg.package_key)}</div>
+      </div>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-sm btn-ghost" onclick="showEditEventPackageModal(${pkg.id})">Edit</button>
+        <button class="btn btn-sm btn-ghost-red" onclick="deleteEventPackage(${pkg.id})">Delete</button>
+      </div>
+    </div>
+
+    <div style="margin-bottom:12px">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Location pricing</div>
+      ${pkg.location_pricing.length ? `
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          ${pkg.location_pricing.map(lp => `<span class="badge badge-gold">${adminEscapeHTML(lp.location)}: ${fmt(lp.price)}</span>`).join("")}
+        </div>` : `<div style="font-size:12px;color:var(--muted)">None set — this package will show "Negotiate" for every location.</div>`}
+    </div>
+
+    <div>
+      <div class="flex-between" style="margin-bottom:8px">
+        <div style="font-size:12px;color:var(--muted)">Cars in this package</div>
+        <button class="btn btn-sm btn-ghost" onclick="showAddEventPackageCarModal(${pkg.id})"><span class="material-icons-outlined" style="font-size:14px;vertical-align:-3px">add</span> Add Car</button>
+      </div>
+      ${pkg.cars.length ? `
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          ${pkg.cars.map(c => `
+            <div style="width:112px">
+              <div style="width:112px;height:72px;border-radius:8px;overflow:hidden;background:var(--card-dark)">
+                ${c.photo ? `<img src="${c.photo}" style="width:100%;height:100%;object-fit:cover">` : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:var(--muted)"><span class="material-icons-outlined">directions_car</span></div>`}
+              </div>
+              <div style="font-size:11px;margin-top:4px;line-height:1.3">${adminEscapeHTML(c.model)}${c.year ? ` (${adminEscapeHTML(c.year)})` : ""}</div>
+              <div style="display:flex;gap:4px;margin-top:4px">
+                <button class="btn btn-sm btn-ghost" style="flex:1;padding:2px 4px;font-size:10px" onclick="showEditEventPackageCarModal(${c.id},${pkg.id})">Edit</button>
+                <button class="btn btn-sm btn-ghost-red" style="flex:1;padding:2px 4px;font-size:10px" onclick="deleteEventPackageCar(${c.id})">✕</button>
+              </div>
+            </div>`).join("")}
+        </div>` : `<div style="font-size:12px;color:var(--muted)">No cars yet — this package won't be selectable until at least one is added.</div>`}
+    </div>
+  </div>`).join("");
+}
+
+function eventPackageLocationPricingRowsHTML(containerId, existingPricing) {
+  return (existingPricing || []).map(lp => `
+    <div style="display:flex;gap:6px;margin-bottom:6px" class="epkg-price-row">
+      <input type="text" class="input-field" placeholder="e.g. Municipal" style="flex:1;font-size:13px;padding:8px" data-location value="${adminEscapeHTML(lp.location)}">
+      <input type="number" class="input-field" placeholder="₦ price" style="flex:1;font-size:13px;padding:8px" data-price min="0" value="${Number(lp.price)}">
+      <button type="button" class="btn btn-sm btn-ghost-red" onclick="this.closest('.epkg-price-row').remove()">
+        <span class="material-icons-outlined" style="font-size:16px">delete</span>
+      </button>
+    </div>`).join("");
+}
+
+function addEventPackagePricingRow(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const row = document.createElement("div");
+  row.className = "epkg-price-row";
+  row.style.cssText = "display:flex;gap:6px;margin-bottom:6px";
+  row.innerHTML = `
+    <input type="text" class="input-field" placeholder="e.g. Municipal" style="flex:1;font-size:13px;padding:8px" data-location>
+    <input type="number" class="input-field" placeholder="₦ price" style="flex:1;font-size:13px;padding:8px" data-price min="0">
+    <button type="button" class="btn btn-sm btn-ghost-red" onclick="this.closest('.epkg-price-row').remove()">
+      <span class="material-icons-outlined" style="font-size:16px">delete</span>
+    </button>`;
+  container.appendChild(row);
+}
+
+function readEventPackagePricingRows(containerId) {
+  const rows = [];
+  document.querySelectorAll(`#${containerId} .epkg-price-row`).forEach(row => {
+    const location = row.querySelector("[data-location]").value.trim();
+    const price = parseFloat(row.querySelector("[data-price]").value || 0);
+    if (location && price > 0) rows.push({ location, price });
+  });
+  return rows;
+}
+
+function showAddEventPackageModal() {
+  showModal(`
+  <div class="modal-header">
+    <h3>Add Package — ${adminEscapeHTML(EVENT_PACKAGE_EVENTS.find(e => e.key === currentEventPackagesKey)?.label || currentEventPackagesKey)}</h3>
+    <button class="modal-close" onclick="closeModal()"><span class="material-icons-outlined">close</span></button>
+  </div>
+  <div class="modal-body" style="max-height:80vh;overflow-y:auto">
+    <div class="input-group"><label>Package Name *</label><input class="input-field" id="ep-name" placeholder="e.g. Diamond"></div>
+    <div class="input-group"><label>Package Key *</label><input class="input-field" id="ep-key" placeholder="e.g. diamond (lowercase, no spaces)"></div>
+    <div class="input-group"><label>Tagline (optional)</label><input class="input-field" id="ep-tagline" placeholder="e.g. Top-tier chauffeured luxury"></div>
+    <div class="input-group"><label>Sort Order</label><input type="number" class="input-field" id="ep-sort" value="0"></div>
+
+    <div class="input-group">
+      <label>Location Pricing</label>
+      <div style="background:var(--card-dark);border-radius:8px;padding:12px;margin-bottom:12px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px">A location with no price here shows "Negotiate" to the customer.</div>
+        <div id="ep-price-list"></div>
+        <button type="button" class="btn btn-sm btn-ghost" onclick="addEventPackagePricingRow('ep-price-list')">
+          <span class="material-icons-outlined" style="font-size:16px">add</span> Add Location Price
+        </button>
+      </div>
+    </div>
+
+    <button class="btn btn-gold btn-full" onclick="adminAddEventPackage()">
+      <span class="material-icons-outlined">add</span> Add Package
+    </button>
+  </div>`);
+  addEventPackagePricingRow("ep-price-list");
+}
+
+async function adminAddEventPackage() {
+  const name = document.getElementById("ep-name").value.trim();
+  const packageKey = document.getElementById("ep-key").value.trim();
+  if (!name || !packageKey) { showToast("Name and package key are required", "error"); return; }
+  const payload = {
+    event_key: currentEventPackagesKey,
+    package_key: packageKey,
+    name,
+    tagline: document.getElementById("ep-tagline").value.trim(),
+    sort_order: parseInt(document.getElementById("ep-sort").value || 0, 10),
+    location_pricing: readEventPackagePricingRows("ep-price-list"),
+  };
+  const data = await api("/event-packages.php?action=admin_add_package", "POST", payload);
+  if (data.error) { showToast(data.error, "error"); return; }
+  closeModal();
+  showToast("Package added", "success");
+  loadEventPackagesList();
+}
+
+function showEditEventPackageModal(id) {
+  const pkg = eventPackagesCache.find(p => p.id === id);
+  if (!pkg) return;
+  showModal(`
+  <div class="modal-header">
+    <h3>Edit Package</h3>
+    <button class="modal-close" onclick="closeModal()"><span class="material-icons-outlined">close</span></button>
+  </div>
+  <div class="modal-body" style="max-height:80vh;overflow-y:auto">
+    <div class="input-group"><label>Package Name</label><input class="input-field" id="ep-edit-name" value="${adminEscapeHTML(pkg.name)}"></div>
+    <div class="input-group"><label>Tagline</label><input class="input-field" id="ep-edit-tagline" value="${adminEscapeHTML(pkg.tagline || "")}"></div>
+    <div class="input-group"><label>Sort Order</label><input type="number" class="input-field" id="ep-edit-sort" value="${Number(pkg.sort_order || 0)}"></div>
+
+    <div class="input-group">
+      <label>Location Pricing</label>
+      <div style="background:var(--card-dark);border-radius:8px;padding:12px;margin-bottom:12px">
+        <div id="ep-edit-price-list">${eventPackageLocationPricingRowsHTML("ep-edit-price-list", pkg.location_pricing)}</div>
+        <button type="button" class="btn btn-sm btn-ghost" onclick="addEventPackagePricingRow('ep-edit-price-list')">
+          <span class="material-icons-outlined" style="font-size:16px">add</span> Add Location Price
+        </button>
+      </div>
+    </div>
+
+    <button class="btn btn-gold btn-full" onclick="adminUpdateEventPackage(${pkg.id})">Save Changes</button>
+  </div>`);
+}
+
+async function adminUpdateEventPackage(id) {
+  const payload = {
+    id,
+    name: document.getElementById("ep-edit-name").value.trim(),
+    tagline: document.getElementById("ep-edit-tagline").value.trim(),
+    sort_order: parseInt(document.getElementById("ep-edit-sort").value || 0, 10),
+    location_pricing: readEventPackagePricingRows("ep-edit-price-list"),
+  };
+  const data = await api("/event-packages.php?action=admin_update_package", "POST", payload);
+  if (data.error) { showToast(data.error, "error"); return; }
+  closeModal();
+  showToast("Package updated", "success");
+  loadEventPackagesList();
+}
+
+async function deleteEventPackage(id) {
+  if (!confirm("Delete this package? Its cars and pricing will be removed too.")) return;
+  const data = await api("/event-packages.php?action=admin_delete_package", "POST", { id });
+  if (data.error) { showToast(data.error, "error"); return; }
+  showToast("Package deleted", "success");
+  loadEventPackagesList();
+}
+
+function showAddEventPackageCarModal(packageId) {
+  showModal(`
+  <div class="modal-header">
+    <h3>Add Car to Package</h3>
+    <button class="modal-close" onclick="closeModal()"><span class="material-icons-outlined">close</span></button>
+  </div>
+  <div class="modal-body">
+    <div class="input-group"><label>Car Model *</label><input class="input-field" id="epc-model" placeholder="e.g. Mercedes G-Wagon"></div>
+    <div class="input-group"><label>Year (optional)</label><input class="input-field" id="epc-year" placeholder="2024"></div>
+    <div class="input-group">
+      <label>Car Photo</label>
+      <input type="file" class="input-field" id="epc-image-file" accept="image/jpeg,image/png,image/webp" onchange="adminUploadCarImage('epc')">
+      <input type="hidden" id="epc-image-url">
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+        <button type="button" class="btn btn-sm btn-ghost" onclick="document.getElementById('epc-image-file')?.click()">
+          <span class="material-icons-outlined">cloud_upload</span> Upload Photo
+        </button>
+        <span id="epc-image-status" style="font-size:12px;color:var(--muted)">No image uploaded</span>
+      </div>
+      <div id="epc-image-preview" style="margin-top:8px;height:80px;border-radius:8px;background:var(--card-dark);display:flex;align-items:center;justify-content:center;overflow:hidden"></div>
+    </div>
+    <button class="btn btn-gold btn-full" onclick="adminAddEventPackageCar(${packageId})">
+      <span class="material-icons-outlined">add</span> Add Car
+    </button>
+  </div>`);
+}
+
+async function adminAddEventPackageCar(packageId) {
+  const model = document.getElementById("epc-model").value.trim();
+  if (!model) { showToast("Car model is required", "error"); return; }
+  const payload = {
+    package_id: packageId,
+    model,
+    year: document.getElementById("epc-year").value.trim(),
+    photo: document.getElementById("epc-image-url").value.trim(),
+  };
+  const data = await api("/event-packages.php?action=admin_add_car", "POST", payload);
+  if (data.error) { showToast(data.error, "error"); return; }
+  closeModal();
+  showToast("Car added to package", "success");
+  loadEventPackagesList();
+}
+
+function showEditEventPackageCarModal(carId, packageId) {
+  const pkg = eventPackagesCache.find(p => p.id === packageId);
+  const car = pkg?.cars.find(c => c.id === carId);
+  if (!car) return;
+  showModal(`
+  <div class="modal-header">
+    <h3>Edit Package Car</h3>
+    <button class="modal-close" onclick="closeModal()"><span class="material-icons-outlined">close</span></button>
+  </div>
+  <div class="modal-body">
+    <div class="input-group"><label>Car Model</label><input class="input-field" id="epc-edit-model" value="${adminEscapeHTML(car.model)}"></div>
+    <div class="input-group"><label>Year</label><input class="input-field" id="epc-edit-year" value="${adminEscapeHTML(car.year || "")}"></div>
+    <div class="input-group">
+      <label>Car Photo</label>
+      <input type="file" class="input-field" id="epc-edit-image-file" accept="image/jpeg,image/png,image/webp" onchange="adminUploadCarImage('epc-edit')">
+      <input type="hidden" id="epc-edit-image-url" value="${adminEscapeHTML(car.photo || "")}">
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+        <button type="button" class="btn btn-sm btn-ghost" onclick="document.getElementById('epc-edit-image-file')?.click()">
+          <span class="material-icons-outlined">cloud_upload</span> ${car.photo ? "Replace Photo" : "Upload Photo"}
+        </button>
+        <span id="epc-edit-image-status" style="font-size:12px;color:var(--muted)">${car.photo ? "Current photo set" : "No image uploaded"}</span>
+      </div>
+      <div id="epc-edit-image-preview" style="margin-top:8px;height:80px;border-radius:8px;background:var(--card-dark);display:flex;align-items:center;justify-content:center;overflow:hidden">${car.photo ? `<img src="${car.photo}" style="width:100%;height:100%;object-fit:cover">` : ""}</div>
+    </div>
+    <button class="btn btn-gold btn-full" onclick="adminUpdateEventPackageCar(${carId})">Save Changes</button>
+  </div>`);
+}
+
+async function adminUpdateEventPackageCar(carId) {
+  const payload = {
+    id: carId,
+    model: document.getElementById("epc-edit-model").value.trim(),
+    year: document.getElementById("epc-edit-year").value.trim(),
+    photo: document.getElementById("epc-edit-image-url").value.trim(),
+  };
+  const data = await api("/event-packages.php?action=admin_update_car", "POST", payload);
+  if (data.error) { showToast(data.error, "error"); return; }
+  closeModal();
+  showToast("Car updated", "success");
+  loadEventPackagesList();
+}
+
+async function deleteEventPackageCar(carId) {
+  if (!confirm("Remove this car from the package?")) return;
+  const data = await api("/event-packages.php?action=admin_delete_car", "POST", { id: carId });
+  if (data.error) { showToast(data.error, "error"); return; }
+  showToast("Car removed", "success");
+  loadEventPackagesList();
 }
 
 // ── DRIVERS ────────────────────────────────────────────────────────────────

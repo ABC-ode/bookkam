@@ -43,6 +43,13 @@ define("TERMII_SENDER_ID", env("TERMII_SENDER_ID", "BOOKKAM"));
 define("PAYSTACK_SECRET", env("PAYSTACK_SECRET"));
 define("PAYSTACK_PUBLIC", env("PAYSTACK_PUBLIC"));
 
+// Opay — structure in place, OFF by default. Flip OPAY_ENABLED=true in .env
+// once real keys are dropped in below; no code changes needed elsewhere.
+define("OPAY_ENABLED",    env("OPAY_ENABLED", "false") === "true");
+define("OPAY_PUBLIC_KEY", env("OPAY_PUBLIC_KEY"));
+define("OPAY_SECRET_KEY", env("OPAY_SECRET_KEY"));
+define("OPAY_MERCHANT_ID", env("OPAY_MERCHANT_ID"));
+
 // Twilio WhatsApp
 define("TWILIO_SID",               env("TWILIO_SID"));
 define("TWILIO_TOKEN",             env("TWILIO_TOKEN"));

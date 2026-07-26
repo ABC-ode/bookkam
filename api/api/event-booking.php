@@ -40,14 +40,17 @@ $pdo->beginTransaction();
 try {
     $discountCode = null;
     $discountPercent = 0;
+    $promoId = null;
     $inputCode = trim($input["discount_code"] ?? "");
     if ($inputCode) {
-        $promoStmt = $pdo->prepare("SELECT * FROM promo_codes WHERE code=? AND is_active=1 LIMIT 1");
+        $promoStmt = $pdo->prepare("SELECT * FROM promo_codes WHERE code=? AND is_active=1 LIMIT 1 FOR UPDATE");
         $promoStmt->execute([$inputCode]);
         $promo = $promoStmt->fetch();
-        if ($promo && (empty($promo["expiry_date"]) || strtotime($promo["expiry_date"]) >= strtotime(date("Y-m-d")))) {
+        $withinLimit = $promo && ($promo["max_uses"] === null || (int)$promo["used_count"] < (int)$promo["max_uses"]);
+        if ($promo && $withinLimit && (empty($promo["expiry_date"]) || strtotime($promo["expiry_date"]) >= strtotime(date("Y-m-d")))) {
             $discountCode = $promo["code"];
             $discountPercent = (float)$promo["discount_percent"];
+            $promoId = $promo["id"];
         }
     }
     $finalPrice = $discountPercent > 0 ? round($price * (1 - ($discountPercent / 100)), 2) : $price;
@@ -56,19 +59,24 @@ try {
         (event_key,event_name,pickup_address,dropoff_address,pickup_zone,normalized_zone,pickup_lng,pickup_lat,
          event_date,date_display,pickup_time,passengers,ride_type,package_id,bus_route_id,car_id,selected_car,
          price,discount_code,discount_percent,final_price,status)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'awaiting_confirmation')");
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'pending')");
     $stmt->execute([
         $eventKey,$eventName,$pickup,$dropoff,$zoneLabel,$normalizedZone,$pickupLng,$pickupLat,
         $date,$dateDisplay,$time,$passengers,$rideType,$package ?: null,$busRoute ?: null,$carId ?: null,$selectedCar ?: null,
         $price,$discountCode,$discountPercent,$finalPrice
     ]);
     $bookingId = (int)$pdo->lastInsertId();
+
+    if ($promoId) {
+        $pdo->prepare("UPDATE promo_codes SET used_count = used_count + 1 WHERE id=?")->execute([$promoId]);
+    }
+
     $pdo->commit();
 
     respond([
         "success" => true,
         "booking_id" => $bookingId,
-        "status" => "awaiting_confirmation",
+        "status" => "pending",
         "discount_code" => $discountCode,
         "discount_percent" => $discountPercent,
         "price" => $price,

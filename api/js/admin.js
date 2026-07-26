@@ -588,30 +588,51 @@ async function loadAdminBookings() {
   el.innerHTML = `
   <div class="page-header"><h2>All <span>Bookings</span></h2></div>
   <div style="padding:0 20px">
-    <div class="card" style="margin-bottom:18px">
-      <div class="flex-between" style="margin-bottom:12px">
-        <div class="section-label">Event Bookings Awaiting Confirmation</div>
-        <button class="btn btn-sm btn-ghost" onclick="loadAdminEventBookings('')">View All Event Bookings</button>
+    <div style="display:flex;gap:8px;margin-bottom:18px;border-bottom:1px solid var(--border,rgba(255,255,255,0.08))">
+      <button id="bk-tab-website" class="btn btn-sm btn-gold" style="border-radius:8px 8px 0 0" onclick="switchAdminBookingsTab('website')">Website Bookings</button>
+      <button id="bk-tab-event" class="btn btn-sm btn-ghost" style="border-radius:8px 8px 0 0" onclick="switchAdminBookingsTab('event')">Event Bookings</button>
+    </div>
+
+    <div id="bk-panel-website">
+      <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+        ${["","pending","confirmed","active","completed","cancelled"].map(s=>`<button class="btn btn-sm ${s?"btn-ghost":"btn-gold"} bk-website-filter" onclick="loadAdminBookingsList('${s}')">${s?capitalize(s):"All"}</button>`).join("")}
       </div>
-      <div id="admin-event-bookings-list">${shimmerCards(2)}</div>
+      <div id="admin-bookings-list">${shimmerCards(3)}</div>
     </div>
-    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
-      ${["","pending","confirmed","active","completed","cancelled"].map(s=>`<button class="btn btn-sm ${s?"btn-ghost":"btn-gold"}" onclick="loadAdminBookingsList('${s}')">${s?capitalize(s):"All"}</button>`).join("")}
+
+    <div id="bk-panel-event" style="display:none">
+      <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+        ${["","pending","confirmed","cancelled"].map(s=>`<button class="btn btn-sm ${s==="pending"?"btn-gold":"btn-ghost"} bk-event-filter" onclick="loadAdminEventBookings('${s}')">${s?capitalize(s):"All"}</button>`).join("")}
+      </div>
+      <div id="admin-event-bookings-list">${shimmerCards(3)}</div>
     </div>
-    <div id="admin-bookings-list">${shimmerCards(3)}</div>
   </div>`;
-  loadAdminEventBookings("awaiting_confirmation");
   loadAdminBookingsList("");
+  loadAdminEventBookings("pending");
 }
 
-async function loadAdminEventBookings(status = "awaiting_confirmation") {
+function switchAdminBookingsTab(tab) {
+  const websiteBtn = document.getElementById("bk-tab-website");
+  const eventBtn = document.getElementById("bk-tab-event");
+  const websitePanel = document.getElementById("bk-panel-website");
+  const eventPanel = document.getElementById("bk-panel-event");
+  if (!websiteBtn || !eventBtn || !websitePanel || !eventPanel) return;
+  const onWebsite = tab === "website";
+  websiteBtn.className = `btn btn-sm ${onWebsite ? "btn-gold" : "btn-ghost"}`;
+  eventBtn.className = `btn btn-sm ${!onWebsite ? "btn-gold" : "btn-ghost"}`;
+  websitePanel.style.display = onWebsite ? "" : "none";
+  eventPanel.style.display = onWebsite ? "none" : "";
+}
+
+async function loadAdminEventBookings(status = "pending") {
   const el = document.getElementById("admin-event-bookings-list");
   if (!el) return;
+  document.querySelectorAll(".bk-event-filter").forEach(b => b.classList.toggle("btn-gold", b.textContent === (status ? capitalize(status) : "All")));
   el.innerHTML = shimmerCards(2);
   const data = await api(`/admin.php?action=get_event_bookings${status ? "&status=" + status : ""}`);
   const bookings = data.bookings || [];
   if (!bookings.length) {
-    el.innerHTML = `<div style="text-align:center;padding:28px;color:var(--muted)">No event bookings ${status ? "awaiting confirmation" : "found"}.</div>`;
+    el.innerHTML = `<div style="text-align:center;padding:28px;color:var(--muted)">No event bookings ${status ? "with status \u201c" + status + "\u201d" : "found"}.</div>`;
     return;
   }
   el.innerHTML = bookings.map(b => `
@@ -632,9 +653,9 @@ async function loadAdminEventBookings(status = "awaiting_confirmation") {
         ${Number(b.discount_percent || 0) > 0 ? `<div style="font-size:11px;color:var(--muted)">was ${fmt(b.price)}</div>` : ""}
       </div>
     </div>
-    ${b.status === "awaiting_confirmation" ? `
+    ${b.status === "pending" ? `
     <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
-      <button class="btn btn-sm btn-green" onclick="adminUpdateEventBookingStatus(${b.id},'confirmed')">Confirm Booking</button>
+      <button class="btn btn-sm btn-green" onclick="adminUpdateEventBookingStatus(${b.id},'confirmed')">Mark Confirmed</button>
       <button class="btn btn-sm btn-ghost-red" onclick="adminUpdateEventBookingStatus(${b.id},'cancelled')">Cancel</button>
     </div>` : ""}
   </div>`).join("");
@@ -644,12 +665,13 @@ async function adminUpdateEventBookingStatus(bookingId, status) {
   const data = await api("/admin.php?action=confirm_event_booking", "POST", { booking_id: bookingId, status });
   if (data.error) { showToast(data.error, "error"); return; }
   showToast(status === "confirmed" ? "Event booking confirmed" : "Event booking cancelled", "success");
-  loadAdminEventBookings("awaiting_confirmation");
+  loadAdminEventBookings("pending");
 }
 
 async function loadAdminBookingsList(status) {
   const el = document.getElementById("admin-bookings-list");
   if (!el) return;
+  document.querySelectorAll(".bk-website-filter").forEach(b => b.classList.toggle("btn-gold", b.textContent === (status ? capitalize(status) : "All")));
   el.innerHTML = shimmerCards(3);
   const data = await api(`/admin.php?action=get_bookings${status?"&status="+status:""}`);
   const bookings = data.bookings || [];
@@ -670,10 +692,12 @@ async function loadAdminBookingsList(status) {
       </div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
+      ${b.status==="pending"?`<button class="btn btn-sm btn-green" onclick="adminUpdateBookingStatus(${b.id},'confirmed')">Mark Confirmed</button>`:""}
       ${b.status==="confirmed"?`<button class="btn btn-sm btn-green" onclick="adminUpdateBookingStatus(${b.id},'active')">Start Trip</button>`:""}
       ${b.status==="active"?`<button class="btn btn-sm btn-gold" onclick="adminUpdateBookingStatus(${b.id},'completed')">Complete</button>`:""}
       ${b.status==="completed"&&b.security_deposit>0&&!b.deposit_released?`<button class="btn btn-sm btn-ghost" onclick="releaseDeposit(${b.id})">Release Deposit</button>`:""}
       ${b.status==="completed"?`<button class="btn btn-sm btn-ghost-red" onclick="showDamageReportModal(${b.id})">Damage Report</button>`:""}
+      ${["pending","confirmed"].includes(b.status)?`<button class="btn btn-sm btn-ghost-red" onclick="adminUpdateBookingStatus(${b.id},'cancelled')">Cancel</button>`:""}
     </div>
   </div>`).join("");
 }
@@ -692,6 +716,7 @@ async function releaseDeposit(bookingId) {
   showToast("Deposit released to customer wallet","success");
   loadAdminBookingsList("");
 }
+
 
 function showDamageReportModal(bookingId) {
   showModal(`

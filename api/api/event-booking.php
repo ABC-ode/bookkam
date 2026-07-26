@@ -38,15 +38,17 @@ $normalizedZone = (str_contains(strtolower($zoneLabel), "8") || str_contains(str
 
 $pdo->beginTransaction();
 try {
-    $countStmt = $pdo->prepare("SELECT COUNT(*) FROM event_bookings WHERE event_key=? AND discount_code IS NOT NULL FOR UPDATE");
-    $countStmt->execute([$eventKey]);
-    $discountedCount = (int)$countStmt->fetchColumn();
-
     $discountCode = null;
     $discountPercent = 0;
-    if ($discountedCount < 10) {
-        $discountCode = "FIRST10";
-        $discountPercent = 10;
+    $inputCode = trim($input["discount_code"] ?? "");
+    if ($inputCode) {
+        $promoStmt = $pdo->prepare("SELECT * FROM promo_codes WHERE code=? AND is_active=1 LIMIT 1");
+        $promoStmt->execute([$inputCode]);
+        $promo = $promoStmt->fetch();
+        if ($promo && (empty($promo["expiry_date"]) || strtotime($promo["expiry_date"]) >= strtotime(date("Y-m-d")))) {
+            $discountCode = $promo["code"];
+            $discountPercent = (float)$promo["discount_percent"];
+        }
     }
     $finalPrice = $discountPercent > 0 ? round($price * (1 - ($discountPercent / 100)), 2) : $price;
 

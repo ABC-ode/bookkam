@@ -1105,7 +1105,7 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
 
       fetchConfig(eventKey).then(function (cfg) {
        bookingView.hidden = false;
-        if (!needsCode) populateModal(cfg);
+        populateModal(cfg);
 
         var focusables = getFocusableEls();
         if (focusables.length) focusables[0].focus();

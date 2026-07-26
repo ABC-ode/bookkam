@@ -497,6 +497,8 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
   .gy-package-top { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
   .gy-package-name { font-size: 1rem; font-weight: 800; color: #fff; }
   .gy-package-price { font-size: 0.95rem; font-weight: 800; color: #E8420A; white-space: nowrap; }
+  .gy-negotiate-link { font-size: 0.85rem; font-weight: 700; color: #25D366; white-space: nowrap; text-decoration: none; display: inline-flex; align-items: center; gap: 2px; }
+  .gy-negotiate-link:hover { text-decoration: underline; }
   .gy-package-tagline { font-size: 0.78rem; color: #9BA1B4; }
   .gy-package-cars-line { font-size: 0.75rem; color: #7C8299; }
   .gy-package-selected-car { font-size: 0.78rem; color: #FFD27A; font-weight: 600; }
@@ -607,7 +609,13 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
   var CONFIG_ENDPOINT = '/api/event-config.php';
   var PROMO_ENDPOINT = '/api/promo-code.php';
   var BOOKING_ENDPOINT = '/api/event-booking.php';
+  var PUBLIC_CONFIG_ENDPOINT = '/api/public-config.php';
   var GY_TOKEN = "pk.eyJ1IjoiYm9va2thbSIsImEiOiJjbW5uYXRyaXYxZm9lMnByNjc1OHNycG5vIn0.zUAwUDojhM0ROm2l58J4kg";
+
+  var WHATSAPP_NUMBER = '2348000000000'; // overwritten below once /api/public-config.php responds
+  fetch(PUBLIC_CONFIG_ENDPOINT).then(function (r) { return r.json(); }).then(function (data) {
+    if (data && data.whatsapp_support) WHATSAPP_NUMBER = data.whatsapp_support;
+  }).catch(function () {});
 
   var discountByEvent = {};  // eventKey -> discount_percent from an applied discount code
   var loadedConfigs = {};    // eventKey -> config object once fetched
@@ -741,6 +749,27 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
       return Math.round(base * (surge > 0 ? surge : 1));
     }
 
+    // Returns a matching admin-set price for this car + the currently chosen zone label,
+    // or null if the location isn't in the admin's pre-defined list (customer should negotiate).
+    function carLocationPrice(car) {
+      var chosen = currentZoneLabel().trim().toLowerCase();
+      var list = (car && car.location_pricing) || [];
+      for (var i = 0; i < list.length; i++) {
+        var loc = (list[i].location || '').trim().toLowerCase();
+        if (loc && (loc === chosen || chosen.indexOf(loc) !== -1 || loc.indexOf(chosen) !== -1)) {
+          return Number(list[i].price);
+        }
+      }
+      return null;
+    }
+
+    function whatsappLink(car) {
+      var msg = "Hi, I'd like to negotiate a price for the " + (car.name || (car.make + ' ' + car.model)) +
+        " for " + (overlay.querySelector('.gy-dyn-title') ? overlay.querySelector('.gy-dyn-title').textContent : 'my event') +
+        ". My pickup zone is " + currentZoneLabel() + ".";
+      return 'https://wa.me/' + WHATSAPP_NUMBER + '?text=' + encodeURIComponent(msg);
+    }
+
     function carDisplayName(car) {
       return [car.name, car.year, car.make, car.model].filter(Boolean).join(' · ');
     }
@@ -798,14 +827,17 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
         return;
       }
       cars.forEach(function (car, i) {
-        var price = systemCarPrice(car);
+        var locationPrice = carLocationPrice(car);
+        var priceHTML = locationPrice !== null
+          ? formatNaira(locationPrice)
+          : '<a href="' + whatsappLink(car) + '" target="_blank" rel="noopener" class="gy-negotiate-link" onclick="event.stopPropagation()">Negotiate <span class="material-icons-outlined" style="font-size:14px;vertical-align:-2px">chat</span></a>';
         var card = document.createElement('label');
         card.className = 'gy-package-card';
         card.innerHTML =
           '<input type="radio" name="car-' + eventKey + '" value="' + car.id + '"' + (i === 0 ? ' checked' : '') + ' />' +
           '<span class="gy-package-top">' +
             '<span class="gy-package-name">' + escapeHTML(car.name || (car.make + ' ' + car.model)) + '</span>' +
-            '<span class="gy-package-price" data-car-price-for="' + car.id + '">' + formatNaira(price) + '</span>' +
+            '<span class="gy-package-price" data-car-price-for="' + car.id + '">' + priceHTML + '</span>' +
           '</span>' +
           '<span class="gy-package-tagline">' + escapeHTML((car.car_type === 'self_drive' ? 'Self-drive' : 'Chauffeur') + ' · ' + (car.category || 'car')) + '</span>' +
           '<span class="gy-package-cars-line">' + escapeHTML([car.year, car.make, car.model, car.color].filter(Boolean).join(' · ')) + '</span>';
@@ -854,9 +886,16 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
       (cars || []).forEach(function (car) {
         var label = packageListEl.querySelector('[data-car-price-for="' + car.id + '"]');
         if (!label) return;
-        var price = systemCarPrice(car);
-        label.textContent = formatNaira(price);
-        label.dataset.finalPrice = price;
+        var locationPrice = carLocationPrice(car);
+        if (locationPrice !== null) {
+          label.textContent = formatNaira(locationPrice);
+          label.dataset.finalPrice = locationPrice;
+          label.dataset.negotiate = '';
+        } else {
+          label.innerHTML = '<a href="' + whatsappLink(car) + '" target="_blank" rel="noopener" class="gy-negotiate-link" onclick="event.stopPropagation()">Negotiate <span class="material-icons-outlined" style="font-size:14px;vertical-align:-2px">chat</span></a>';
+          label.dataset.finalPrice = '';
+          label.dataset.negotiate = '1';
+        }
       });
     }
 
@@ -864,7 +903,15 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
       var checked = form.querySelector('input[name="car-' + eventKey + '"]:checked');
       if (!checked) return null;
       var label = packageListEl.querySelector('[data-car-price-for="' + checked.value + '"]');
-      return label ? Number(label.dataset.finalPrice) : null;
+      if (!label || label.dataset.negotiate === '1' || label.dataset.finalPrice === '') return null;
+      return Number(label.dataset.finalPrice);
+    }
+
+    function selectedCarNeedsNegotiate() {
+      var checked = form.querySelector('input[name="car-' + eventKey + '"]:checked');
+      if (!checked) return false;
+      var label = packageListEl.querySelector('[data-car-price-for="' + checked.value + '"]');
+      return !!(label && label.dataset.negotiate === '1');
     }
 
     function selectedBusPrice(cfg) {
@@ -1159,6 +1206,10 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
         }
         if (!pickup || !dropoff || !zoneLabel || !date || !time || !passengers || !selectedSystemCar) {
           alert('Please fill in all fields and select a car to complete your booking.');
+          return;
+        }
+        if (selectedCarNeedsNegotiate()) {
+          window.open(whatsappLink(selectedSystemCar), '_blank', 'noopener');
           return;
         }
         payload.car_id = selectedSystemCar.id;

@@ -1,0 +1,12 @@
+# BOOKKAM — put this file in the website root (same folder as index.php).
+
+# No folder listings
+Options -Indexes
+
+# Block private folders (the PHP code still reads them internally)
+RedirectMatch 403 ^/(config|project|migrations)(/|$)
+
+# Block secrets and non-web files: .env, .git, logs, scripts, SQL, zips, docs
+<FilesMatch "(^\.env.*|^\.git.*|^error_log$|\.(sh|sql|log|zip|md)$)">
+  Require all denied
+</FilesMatch>

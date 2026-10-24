@@ -1,0 +1,12 @@
+# Secrets — real values live only on the server
+.env
+.env.*
+!.env.example
+
+# Logs and local artifacts
+error_log
+*.log
+*.zip
+
+# OS / editor
+.DS_Store

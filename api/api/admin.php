@@ -203,22 +203,35 @@ switch ($action) {
         $description = $input["description"]         ?? "";
         $cost        = (float)($input["repair_cost"] ?? 0);
         if (!$bookingId || !$description) respondError("booking_id and description required");
-        $pdo->prepare("INSERT INTO damage_reports (booking_id,description,repair_cost,reported_by,created_at) VALUES (?,?,?,?,NOW())")
-            ->execute([$bookingId,$description,$cost,$user["id"]]);
-        // Deduct from deposit if applicable
-        if ($cost > 0) {
-            $bs = $pdo->prepare("SELECT * FROM bookings WHERE id=?");
-            $bs->execute([$bookingId]);
-            $b = $bs->fetch();
-            if ($b && $b["security_deposit"] > 0) {
-                $refund = max(0, $b["security_deposit"] - $cost);
-                if ($refund > 0) {
-                    $pdo->prepare("UPDATE users SET wallet_balance=wallet_balance+? WHERE id=?")->execute([$refund,$b["customer_id"]]);
+        if (!is_finite($cost) || $cost < 0) respondError("Invalid repair cost", 422);
+        // Deduct from deposit if applicable. The deposit can be settled exactly once:
+        // the claim, the wallet credit and the report all commit together or not at all.
+        $reportId = null;
+        $pdo->beginTransaction();
+        try {
+            $pdo->prepare("INSERT INTO damage_reports (booking_id,description,repair_cost,reported_by,created_at) VALUES (?,?,?,?,NOW())")
+                ->execute([$bookingId,$description,$cost,$user["id"]]);
+            $reportId = $pdo->lastInsertId();
+            if ($cost > 0) {
+                $bs = $pdo->prepare("SELECT * FROM bookings WHERE id=?");
+                $bs->execute([$bookingId]);
+                $b = $bs->fetch();
+                if ($b && $b["security_deposit"] > 0) {
+                    $refund = max(0, $b["security_deposit"] - min($cost, $b["security_deposit"]));
+                    $claim = $pdo->prepare("UPDATE bookings SET deposit_released=1,deposit_refund_amount=? WHERE id=? AND (deposit_released IS NULL OR deposit_released=0)");
+                    $claim->execute([$refund,$bookingId]);
+                    if ($claim->rowCount() === 1 && $refund > 0) {
+                        $pdo->prepare("UPDATE users SET wallet_balance=wallet_balance+? WHERE id=?")->execute([$refund,$b["customer_id"]]);
+                    }
                 }
-                $pdo->prepare("UPDATE bookings SET deposit_released=1,deposit_refund_amount=? WHERE id=?")->execute([$refund,$bookingId]);
             }
+            $pdo->commit();
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            error_log("BOOKKAM add_damage_report failed: " . $e->getMessage());
+            respondError("Could not save damage report", 500);
         }
-        respond(["success"=>true,"id"=>$pdo->lastInsertId()]);
+        respond(["success"=>true,"id"=>$reportId]);
     }
 
     case "toggle_surge": {
@@ -284,7 +297,7 @@ switch ($action) {
         $name=$input["name"]??""; $state=$input["state"]??"";
         if (!$name||!$state) respondError("name and state required");
         $pdo->prepare("INSERT INTO cities (name,state,is_active) VALUES (?,?,1)")->execute([$name,$state]);
-        respond(["success"=>true,"id"=>$pdo->lastInsertId()]);
+        respond(["success"=>true,"id"=>$reportId]);
     }
 
     case "update_pricing": {

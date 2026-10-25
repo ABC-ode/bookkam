@@ -7,6 +7,39 @@ $input  = json_decode(file_get_contents("php://input"), true) ?? [];
 $action = $_GET["action"] ?? $input["action"] ?? "";
 $user   = getAuthUser($pdo);
 
+
+// Cancel a booking exactly once: flips the status, frees the car and returns any money the
+// customer already paid (price + deposit) to their wallet — all in one transaction.
+// Returns the refunded amount, or null if the booking was not cancellable (already
+// cancelled/completed/active), so a double click or race can never refund twice.
+function cancelWithRefund($pdo, $b) {
+    $pdo->beginTransaction();
+    try {
+        $u = $pdo->prepare("UPDATE bookings SET status='cancelled' WHERE id=? AND status IN ('pending','confirmed')");
+        $u->execute([$b["id"]]);
+        if ($u->rowCount() !== 1) { $pdo->rollBack(); return null; }
+        if ($b["car_type"] === "self_drive") {
+            $pdo->prepare("UPDATE cars SET availability_status='available',is_available=1 WHERE id=?")->execute([$b["car_id"]]);
+        } else {
+            $pdo->prepare("UPDATE cars SET is_available=1 WHERE id=?")->execute([$b["car_id"]]);
+        }
+        $ps = $pdo->prepare("SELECT COALESCE(SUM(amount + COALESCE(deposit_amount,0)),0) FROM payments
+            WHERE booking_id=? AND booking_kind='website' AND status='success'");
+        $ps->execute([$b["id"]]);
+        $refund = (float)$ps->fetchColumn();
+        if ($refund > 0) {
+            $pdo->prepare("UPDATE users SET wallet_balance=wallet_balance+? WHERE id=?")->execute([$refund, $b["customer_id"]]);
+            $pdo->prepare("INSERT INTO notifications (user_id,title,body,type) VALUES (?,?,?,'payment')")
+                ->execute([$b["customer_id"], "Booking refunded", "Booking #{$b['id']} was cancelled. ₦" . number_format($refund) . " has been returned to your BOOKKAM wallet.", ]);
+        }
+        $pdo->commit();
+        return $refund;
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
+}
+
 switch ($action) {
 
     case "create": {
@@ -24,7 +57,7 @@ switch ($action) {
         if (!$pickup) respondError("Pickup address required");
 
         // Get car
-        $cs = $pdo->prepare("SELECT c.*, d.id as did FROM cars c LEFT JOIN drivers d ON c.driver_id=d.id WHERE c.id=?");
+        $cs = $pdo->prepare("SELECT c.*, d.id as did, d.status as driver_status, d.is_online as driver_online FROM cars c LEFT JOIN drivers d ON c.driver_id=d.id WHERE c.id=?");
         $cs->execute([$carId]);
         $car = $cs->fetch();
         if (!$car) respondError("Car not found");
@@ -35,6 +68,7 @@ switch ($action) {
         } else {
             if (!$car["is_available"]) respondError("Car is not available");
             if (!$car["did"]) respondError("No driver assigned to this car");
+            if ($car["driver_status"] !== "active" || !$car["driver_online"]) respondError("This driver is currently unavailable");
         }
 
         // Calculate price
@@ -138,6 +172,11 @@ switch ($action) {
         $s->execute([$id]);
         $booking = $s->fetch();
         if (!$booking) respondError("Booking not found", 404);
+        if ($user["role"] !== "admin" && (int)$booking["customer_id"] !== (int)$user["id"]) {
+            $own = $pdo->prepare("SELECT 1 FROM drivers WHERE id=? AND user_id=?");
+            $own->execute([$booking["driver_id"], $user["id"]]);
+            if (!$own->fetch()) respondError("Booking not found", 404);
+        }
         respond(["booking" => $booking]);
     }
 
@@ -148,23 +187,35 @@ switch ($action) {
         if (!$id || !$status) respondError("booking_id and status required");
         if (!in_array($status,["pending","confirmed","active","completed","cancelled"])) respondError("Invalid status");
 
-        if ($status === "active") {
-            $pdo->prepare("UPDATE bookings SET status=?, start_time=NOW() WHERE id=?")->execute([$status,$id]);
-        } elseif ($status === "completed") {
-            $pdo->prepare("UPDATE bookings SET status=?, end_time=NOW() WHERE id=?")->execute([$status,$id]);
-        } else {
-            $pdo->prepare("UPDATE bookings SET status=? WHERE id=?")->execute([$status,$id]);
-        }
+        $bs0 = $pdo->prepare("SELECT * FROM bookings WHERE id=?");
+        $bs0->execute([$id]);
+        $cur = $bs0->fetch();
+        if (!$cur) respondError("Booking not found", 404);
 
-        if (in_array($status,["completed","cancelled"])) {
-            $cs = $pdo->prepare("SELECT car_id,car_type FROM bookings WHERE id=?");
-            $cs->execute([$id]);
-            $b = $cs->fetch();
-            if ($b) {
-                if ($b["car_type"] === "self_drive") {
-                    $pdo->prepare("UPDATE cars SET availability_status='available',is_available=1 WHERE id=?")->execute([$b["car_id"]]);
+        // Who may change it: an admin, or the driver assigned to this booking. Customers use "cancel".
+        $isAdmin = $user["role"] === "admin";
+        if (!$isAdmin) {
+            $own = $pdo->prepare("SELECT 1 FROM drivers WHERE id=? AND user_id=?");
+            $own->execute([$cur["driver_id"], $user["id"]]);
+            if (!$own->fetch()) respondError("Not allowed", 403);
+        }
+        // Only forward transitions; finished bookings are final.
+        $allowed = ["pending"=>["confirmed","cancelled"], "confirmed"=>["active","cancelled"], "active"=>["completed","cancelled"]];
+        if ($isAdmin) $allowed = ["pending"=>["confirmed","active","completed","cancelled"], "confirmed"=>["active","completed","cancelled"], "active"=>["completed","cancelled"]];
+        if (!in_array($status, $allowed[$cur["status"]] ?? [], true)) respondError("Cannot change a {$cur['status']} booking to $status");
+
+        if ($status === "cancelled") {
+            cancelWithRefund($pdo, $cur) === null && respondError("Cannot cancel at this stage");
+        } else {
+            $col = $status === "active" ? ", start_time=NOW()" : ($status === "completed" ? ", end_time=NOW()" : "");
+            $u = $pdo->prepare("UPDATE bookings SET status=?$col WHERE id=? AND status=?");
+            $u->execute([$status, $id, $cur["status"]]);
+            if ($u->rowCount() !== 1) respondError("Booking was changed by someone else — reload and try again", 409);
+            if ($status === "completed") {
+                if ($cur["car_type"] === "self_drive") {
+                    $pdo->prepare("UPDATE cars SET availability_status='available',is_available=1 WHERE id=?")->execute([$cur["car_id"]]);
                 } else {
-                    $pdo->prepare("UPDATE cars SET is_available=1 WHERE id=?")->execute([$b["car_id"]]);
+                    $pdo->prepare("UPDATE cars SET is_available=1 WHERE id=?")->execute([$cur["car_id"]]);
                 }
             }
         }
@@ -196,13 +247,9 @@ switch ($action) {
         $b = $s->fetch();
         if (!$b) respondError("Booking not found");
         if (!in_array($b["status"],["pending","confirmed"])) respondError("Cannot cancel at this stage");
-        $pdo->prepare("UPDATE bookings SET status='cancelled' WHERE id=?")->execute([$id]);
-        if ($b["car_type"] === "self_drive") {
-            $pdo->prepare("UPDATE cars SET availability_status='available',is_available=1 WHERE id=?")->execute([$b["car_id"]]);
-        } else {
-            $pdo->prepare("UPDATE cars SET is_available=1 WHERE id=?")->execute([$b["car_id"]]);
-        }
-        respond(["success" => true]);
+        $refund = cancelWithRefund($pdo, $b);
+        if ($refund === null) respondError("Cannot cancel at this stage");
+        respond(["success" => true, "refunded" => $refund]);
     }
 
     case "get_driver_bookings": {
@@ -225,9 +272,15 @@ switch ($action) {
         $bs->execute([$id]);
         $b = $bs->fetch();
         if (!$b) respondError("Booking not found");
+        if (!empty($b["deposit_released"])) respondError("Deposit already released");
+        if ($b["status"] !== "completed") respondError("Deposit can be released only after the booking is completed");
         if ($b["security_deposit"] > 0) {
+            $pdo->beginTransaction();
+            $claim = $pdo->prepare("UPDATE bookings SET deposit_released=1,deposit_refund_amount=? WHERE id=? AND (deposit_released IS NULL OR deposit_released=0)");
+            $claim->execute([$b["security_deposit"],$id]);
+            if ($claim->rowCount() !== 1) { $pdo->rollBack(); respondError("Deposit already released"); }
             $pdo->prepare("UPDATE users SET wallet_balance=wallet_balance+? WHERE id=?")->execute([$b["security_deposit"],$b["customer_id"]]);
-            $pdo->prepare("UPDATE bookings SET deposit_released=1,deposit_refund_amount=? WHERE id=?")->execute([$b["security_deposit"],$id]);
+            $pdo->commit();
             // Fetch customer phone and send notification
             $cu = $pdo->prepare("SELECT phone,name FROM users WHERE id=?");
             $cu->execute([$b["customer_id"]]);

@@ -20,7 +20,7 @@ $package = trim($input["package"] ?? "");
 $busRoute = trim($input["bus_route"] ?? "");
 $carId = (int)($input["car_id"] ?? 0);
 $selectedCar = trim($input["selected_car"] ?? "");
-$price = (float)($input["price"] ?? 0);
+$clientPrice = (float)($input["price"] ?? 0); // display only — never trusted
 $pickupLng = $input["pickup_lng"] ?? null;
 $pickupLat = $input["pickup_lat"] ?? null;
 
@@ -29,8 +29,27 @@ if (!$pickup || !$dropoff || !$zoneLabel) respondError("Pickup, drop-off, and pi
 if (!$date || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) respondError("Valid event date is required");
 if (!$time || !preg_match('/^\d{2}:\d{2}$/', $time)) respondError("Valid pickup time is required");
 if ($passengers < 1 || $passengers > 20) respondError("Valid passenger count is required");
-if ($price < 0) respondError("Valid price is required");
-if (!$carId || !$selectedCar) respondError("Select a car for this booking");
+if (!$selectedCar || ($package === "" && !$carId)) respondError("Select a car for this booking");
+
+// Price comes from the database only (admin-set per-car or per-package location pricing),
+// using the same zone matching the booking form uses. No match => the customer must negotiate.
+function matchZonePrice(array $rows, string $zoneLabel) {
+    $chosen = strtolower(trim($zoneLabel));
+    foreach ($rows as $r) {
+        $loc = strtolower(trim($r["location"] ?? ""));
+        if ($loc !== "" && ($loc === $chosen || str_contains($chosen, $loc) || str_contains($loc, $chosen))) return (float)$r["price"];
+    }
+    return null;
+}
+if ($package !== "") {
+    $q = $pdo->prepare("SELECT pp.location, pp.price FROM event_package_pricing pp JOIN event_packages p ON p.id=pp.package_id WHERE p.event_key=? AND p.package_key=?");
+    $q->execute([$eventKey, $package]);
+} else {
+    $q = $pdo->prepare("SELECT location, price FROM car_location_pricing WHERE car_id=?");
+    $q->execute([$carId]);
+}
+$price = matchZonePrice($q->fetchAll(), $zoneLabel);
+if ($price === null || $price <= 0) respondError("No fixed price for this selection — please negotiate via WhatsApp", 422);
 
 $normalizedZone = (str_contains(strtolower($zoneLabel), "8") || str_contains(strtolower($zoneLabel), "mile") || str_contains(strtolower($zoneLabel), "mcc"))
     ? "8miles"

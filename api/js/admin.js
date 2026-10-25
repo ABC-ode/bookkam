@@ -47,7 +47,7 @@ function renderAdminTopbar() {
       <span class="material-icons-outlined">notifications_none</span>
       <span id="notif-badge"></span>
     </div>
-    <span style="font-size:12px;color:var(--muted);font-family:'Space Mono',monospace">${currentUser.email||currentUser.name}</span>
+    <span style="font-size:12px;color:var(--muted);font-family:'Space Mono',monospace">${esc(currentUser.email||currentUser.name)}</span>
   </div>`;
 }
 
@@ -93,9 +93,9 @@ async function loadAdminHome() {
       ["Flagged Chats",s.flagged_messages||0,"warning","var(--fire)"],
     ].map(([label,val,icon,color]) => `
     <div class="stat-card">
-      <span class="material-icons-outlined" style="font-size:28px;color:${color};display:block;margin-bottom:8px">${icon}</span>
+      <span class="material-icons-outlined" style="font-size:28px;color:${esc(color)};display:block;margin-bottom:8px">${icon}</span>
       <div style="font-family:'Cormorant Garamond',serif;font-size:28px;font-weight:300;color:var(--text)">${val}</div>
-      <div style="font-size:11px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:0.5px">${label}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:0.5px">${esc(label)}</div>
     </div>`).join("")}
   </div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
@@ -158,11 +158,11 @@ async function loadCarsList(type) {
   <div class="card card-hover" style="margin-bottom:12px">
     <div class="flex-between">
       <div style="display:flex;gap:12px;align-items:center">
-        ${c.main_photo?`<img src="${c.main_photo}" style="width:60px;height:60px;border-radius:8px;object-fit:cover;flex-shrink:0">`:
+        ${c.main_photo?`<img src="${esc(c.main_photo)}" style="width:60px;height:60px;border-radius:8px;object-fit:cover;flex-shrink:0">`:
           `<div style="width:60px;height:60px;border-radius:8px;background:var(--card-dark);display:flex;align-items:center;justify-content:center;flex-shrink:0"><span class="material-icons-outlined">directions_car</span></div>`}
         <div>
-          <div style="font-weight:700">${c.name}</div>
-          <div style="font-size:12px;color:var(--muted)">${c.make||""} ${c.model||""} ${c.year||""} · ${c.plate_number||""}</div>
+          <div style="font-weight:700">${esc(c.name)}</div>
+          <div style="font-size:12px;color:var(--muted)">${esc(c.make||"")} ${esc(c.model||"")} ${c.year||""} · ${esc(c.plate_number||"")}</div>
           <div style="display:flex;gap:6px;margin-top:4px">
             <span class="badge ${c.car_type==="self_drive"?"badge-blue":"badge-orange"}">${c.car_type==="self_drive"?"Self-Drive":"Chauffeur"}</span>
             <span class="badge ${c.availability_status==="available"?"badge-green":"badge-red"}">${capitalize(c.availability_status||"available")}</span>
@@ -466,7 +466,7 @@ function showEditCarModal(carId) {
         </button>
         <span id="ec-image-status" style="font-size:12px;color:var(--muted)">${c.main_photo?"Current image set":"No image uploaded"}</span>
       </div>
-      <div id="ec-image-preview" style="margin-top:8px;height:80px;border-radius:8px;background:var(--card-dark);display:flex;align-items:center;justify-content:center;overflow:hidden">${c.main_photo?`<img src="${c.main_photo}" style="width:100%;height:100%;object-fit:cover">`:""}</div>
+      <div id="ec-image-preview" style="margin-top:8px;height:80px;border-radius:8px;background:var(--card-dark);display:flex;align-items:center;justify-content:center;overflow:hidden">${c.main_photo?`<img src="${esc(c.main_photo)}" style="width:100%;height:100%;object-fit:cover">`:""}</div>
     </div>
 
     <div class="input-group">
@@ -882,8 +882,8 @@ async function loadDriversList(status) {
   <div class="card" style="margin-bottom:12px">
     <div class="flex-between">
       <div>
-        <div style="font-weight:700">${d.name}</div>
-        <div style="font-size:12px;color:var(--muted)">${d.phone} · ${d.city}</div>
+        <div style="font-weight:700">${esc(d.name)}</div>
+        <div style="font-size:12px;color:var(--muted)">${esc(d.phone)} · ${esc(d.city)}</div>
         <div style="font-size:12px;color:var(--muted)">Joined: ${fmtDate(d.joined)} · ${d.car_count||0} car(s)</div>
       </div>
       <span class="badge ${d.status==="active"?"badge-green":d.status==="pending"?"badge-orange":"badge-red"}">${capitalize(d.status)}</span>
@@ -1001,10 +1001,10 @@ async function loadAdminBookingsList(status) {
   <div class="card" style="margin-bottom:12px">
     <div class="flex-between" style="margin-bottom:8px">
       <div>
-        <div style="font-weight:700">#${b.id} · ${b.car_name}</div>
+        <div style="font-weight:700">#${b.id} · ${esc(b.car_name)}</div>
         <div style="font-size:12px;color:var(--muted)">${b.car_type==="self_drive"?"🔑 Self-Drive":"🚗 Chauffeur"} · ${capitalize(b.booking_type)}</div>
-        <div style="font-size:12px;color:var(--muted)">Customer: ${b.customer_name} (${b.customer_phone})</div>
-        <div style="font-size:12px;color:var(--muted)">Driver: ${b.driver_name||"N/A"}</div>
+        <div style="font-size:12px;color:var(--muted)">Customer: ${esc(b.customer_name)} (${esc(b.customer_phone)})</div>
+        <div style="font-size:12px;color:var(--muted)">Driver: ${esc(b.driver_name||"N/A")}</div>
       </div>
       <div style="text-align:right">
         <span class="badge ${statusColor(b.status)}">${capitalize(b.status)}</span>
@@ -1071,11 +1071,11 @@ async function loadAdminMedia() {
   msgEl.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px">
   ${media.map(m => `
   <div class="card" style="padding:0;overflow:hidden">
-    <img src="${m.url}" style="width:100%;height:160px;object-fit:cover" loading="lazy">
+    <img src="${esc(m.url)}" style="width:100%;height:160px;object-fit:cover" loading="lazy">
     <div style="padding:12px">
-      <div style="font-weight:600;font-size:13px;margin-bottom:2px">${m.car_name}</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:2px">${m.label||""} · ${m.category||""}</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">${m.driver_name||"Admin"}</div>
+      <div style="font-weight:600;font-size:13px;margin-bottom:2px">${esc(m.car_name)}</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:2px">${esc(m.label||"")} · ${m.category||""}</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">${esc(m.driver_name||"Admin")}</div>
       <div style="display:flex;gap:6px">
         <button class="btn btn-sm btn-green" style="flex:1" onclick="reviewMedia(${m.id},'approved')">✓ Approve</button>
         <button class="btn btn-sm btn-ghost-red" style="flex:1" onclick="reviewMedia(${m.id},'rejected')">✗ Reject</button>
@@ -1120,9 +1120,9 @@ async function loadChatsList(flaggedOnly) {
       <div>
         <div style="font-weight:700;display:flex;align-items:center;gap:8px">
           ${c.flag_count>0?`<span style="color:var(--fire)">⚠️</span>`:""}
-          ${c.car_name}
+          ${esc(c.car_name)}
         </div>
-        <div style="font-size:12px;color:var(--muted)">Customer: ${c.customer_name} · Driver: ${c.driver_name||"N/A"}</div>
+        <div style="font-size:12px;color:var(--muted)">Customer: ${esc(c.customer_name)} · Driver: ${esc(c.driver_name||"N/A")}</div>
         <div style="font-size:12px;color:var(--muted);margin-top:4px">${c.last_message||""}</div>
       </div>
       <div style="text-align:right">
@@ -1151,7 +1151,7 @@ async function openAdminChatView(bookingId) {
   el.innerHTML = msgs.map(m => `
   <div class="chat-msg-admin ${m.is_flagged?"chat-flagged":""}">
     <div style="font-size:11px;color:var(--muted);margin-bottom:2px">${m.sender_name} · ${fmtTime(m.created_at)}</div>
-    <div class="chat-bubble">${m.message_text} ${m.is_flagged?`<span style="color:var(--fire);font-size:11px">⚠️ Flagged</span>`:""}</div>
+    <div class="chat-bubble">${esc(m.message_text)} ${m.is_flagged?`<span style="color:var(--fire);font-size:11px">⚠️ Flagged</span>`:""}</div>
   </div>`).join("");
   el.scrollTop = el.scrollHeight;
 }
@@ -1169,8 +1169,8 @@ async function loadAdminCustomers() {
   <div class="card" style="margin-bottom:10px">
     <div class="flex-between">
       <div>
-        <div style="font-weight:700">${c.name||"—"}</div>
-        <div style="font-size:12px;color:var(--muted)">+234${c.phone} · ${c.city||"—"}</div>
+        <div style="font-weight:700">${esc(c.name||"—")}</div>
+        <div style="font-size:12px;color:var(--muted)">+234${esc(c.phone)} · ${esc(c.city||"—")}</div>
         <div style="font-size:12px;color:var(--muted)">${c.booking_count||0} bookings · Joined ${fmtDate(c.created_at)}</div>
       </div>
       <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
@@ -1226,8 +1226,8 @@ async function loadAdminPayouts() {
   <div class="card" style="margin-bottom:10px">
     <div class="flex-between">
       <div>
-        <div style="font-weight:700">${p.name}</div>
-        <div style="font-size:12px;color:var(--muted)">${p.bank_name||"—"} · ${p.account_number||"—"}</div>
+        <div style="font-weight:700">${esc(p.name)}</div>
+        <div style="font-size:12px;color:var(--muted)">${esc(p.bank_name||"—")} · ${esc(p.account_number||"—")}</div>
         <div style="font-size:12px;color:var(--muted)">${fmtDate(p.created_at)}</div>
       </div>
       <div style="text-align:right">
@@ -1255,7 +1255,7 @@ async function loadAdminPricing() {
   if (!pEl) return;
   pEl.innerHTML = (data.pricing||[]).map(p => `
   <div class="card" style="margin-bottom:10px">
-    <div style="font-weight:700;margin-bottom:8px">${capitalize(p.category)} · ${capitalize(p.booking_type)} · ${p.city}</div>
+    <div style="font-weight:700;margin-bottom:8px">${capitalize(p.category)} · ${capitalize(p.booking_type)} · ${esc(p.city)}</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
       <div class="input-group"><label>Base Price</label><input type="number" class="input-field" id="p-base-${p.id}" value="${p.base_price}"></div>
       <div class="input-group"><label>Per Hour</label><input type="number" class="input-field" id="p-hour-${p.id}" value="${p.per_hour_price}"></div>
@@ -1309,7 +1309,7 @@ async function loadPromosList() {
   <div class="card" style="margin-bottom:10px">
     <div class="flex-between">
       <div>
-        <div style="font-weight:700;font-family:'Space Mono',monospace">${p.code}</div>
+        <div style="font-weight:700;font-family:'Space Mono',monospace">${esc(p.code)}</div>
         <div style="font-size:12px;color:var(--muted)">${p.discount_percent}% off · ${p.uses_count||0}/${p.max_uses} uses · Expires ${fmtDate(p.expiry_date)}</div>
       </div>
       <span class="badge ${p.is_active?"badge-green":"badge-red"}">${p.is_active?"Active":"Inactive"}</span>
@@ -1533,7 +1533,7 @@ async function loadCitiesList() {
   <div class="card" style="margin-bottom:8px">
     <div class="flex-between">
       <div>
-        <div style="font-weight:700">${c.name}, ${c.state}</div>
+        <div style="font-weight:700">${esc(c.name)}, ${esc(c.state)}</div>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
         <span class="badge ${c.is_active?"badge-green":"badge-red"}">${c.is_active?"Active":"Inactive"}</span>

@@ -166,7 +166,7 @@ switch ($action) {
     // ── Tells the frontend which methods are actually usable right now ─────
     case "get_methods": {
         respond([
-            "paystack" => !empty(PAYSTACK_SECRET) || TEST_MODE,
+            "paystack" => false,
             "opay"     => OPAY_ENABLED && !empty(OPAY_SECRET_KEY),
         ]);
     }
@@ -234,34 +234,9 @@ switch ($action) {
             }
 
             case "paystack": {
-                if (empty(PAYSTACK_SECRET) && !TEST_MODE) respondError("Paystack is not configured");
-                if (TEST_MODE) {
-                    instantSuccess($pdo, $bookingType, $bookingId, $amount, $deposit, "paystack");
-                    respond(["success" => true, "method" => "paystack", "status" => "confirmed", "message" => "Test Paystack payment simulated"]);
-                }
-                $ref  = "BKM-" . strtoupper($bookingType) . "-" . $bookingId . "-" . time() . bin2hex(random_bytes(3));
-                $curl = curl_init();
-                curl_setopt_array($curl, [
-                    CURLOPT_URL            => "https://api.paystack.co/transaction/initialize",
-                    CURLOPT_RETURNTRANSFER => true,
-                    CURLOPT_POST           => true,
-                    CURLOPT_HTTPHEADER     => ["Authorization: Bearer " . PAYSTACK_SECRET, "Content-Type: application/json"],
-                    CURLOPT_POSTFIELDS     => json_encode([
-                        "email"        => $email,
-                        "amount"       => (int)round($totalCharge * 100),
-                        "reference"    => $ref,
-                        "callback_url" => "https://bookkam.com/?paystack_return=1&booking_type=$bookingType",
-                    ]),
-                ]);
-                $res  = curl_exec($curl);
-                $data = json_decode($res, true);
-                curl_close($curl);
-                if (!empty($data["status"])) {
-                    $pdo->prepare("INSERT INTO payments (booking_id,amount,deposit_amount,method,status,paystack_reference,booking_kind) VALUES (?,?,?,?,'pending',?,?)")
-                        ->execute([$bookingId, $amount, $deposit, "paystack", $ref, $bookingType]);
-                    respond(["success" => true, "authorization_url" => $data["data"]["authorization_url"], "reference" => $ref]);
-                }
-                respondError("Payment initiation failed");
+                // Paystack is frozen for new payments. Keep webhook/verification
+                // handlers below for any historical or in-flight transactions.
+                respondError("Paystack is disabled. Please choose another payment method.", 410);
                 break;
             }
 

@@ -86,7 +86,8 @@ switch ($action) {
 
     case "get_drivers": {
         $status = $_GET["status"] ?? "";
-        $sql = "SELECT d.*,u.name,u.phone,u.city,u.created_at as joined,
+        // Explicit columns only: bank details stay in get_payouts (where the payout screen needs them).
+        $sql = "SELECT d.id,d.status,u.name,u.phone,u.city,u.created_at as joined,
             (SELECT COUNT(*) FROM cars WHERE driver_id=d.id) as car_count
             FROM drivers d JOIN users u ON d.user_id=u.id";
         $params = [];
@@ -239,7 +240,9 @@ switch ($action) {
     }
 
     case "get_customers": {
-        $s = $pdo->query("SELECT u.*,(SELECT COUNT(*) FROM bookings WHERE customer_id=u.id) as booking_count
+        // Explicit columns only: never return password_hash, otp_*, google_id/apple_id, wallet_balance or email.
+        $s = $pdo->query("SELECT u.id,u.name,u.phone,u.city,u.is_blacklisted,u.created_at,
+            (SELECT COUNT(*) FROM bookings WHERE customer_id=u.id) as booking_count
             FROM users u WHERE u.role='customer' ORDER BY u.created_at DESC");
         respond(["customers"=>$s->fetchAll()]);
     }

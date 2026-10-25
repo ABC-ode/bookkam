@@ -297,7 +297,7 @@ switch ($action) {
         $name=$input["name"]??""; $state=$input["state"]??"";
         if (!$name||!$state) respondError("name and state required");
         $pdo->prepare("INSERT INTO cities (name,state,is_active) VALUES (?,?,1)")->execute([$name,$state]);
-        respond(["success"=>true,"id"=>$reportId]);
+        respond(["success"=>true,"id"=>$pdo->lastInsertId()]);
     }
 
     case "update_pricing": {

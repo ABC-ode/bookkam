@@ -342,7 +342,7 @@ switch ($action) {
             $u = $s->fetch();
             respond(["success" => true, "new_balance" => $u["wallet_balance"], "message" => "Wallet topped up"]);
         }
-        respondError("Use Paystack or Opay for production top-up");
+        respondError("Use OPay for production top-up");
     }
 
     case "get_wallet": {

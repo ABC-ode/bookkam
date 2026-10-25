@@ -14,3 +14,5 @@ CREATE TABLE IF NOT EXISTS promo_codes(id INTEGER PRIMARY KEY AUTOINCREMENT, cod
 CREATE TABLE IF NOT EXISTS event_packages(id INTEGER PRIMARY KEY AUTOINCREMENT, event_key TEXT, package_key TEXT, name TEXT, tagline TEXT, sort_order INT DEFAULT 0);
 CREATE TABLE IF NOT EXISTS event_package_pricing(id INTEGER PRIMARY KEY AUTOINCREMENT, package_id INT, location TEXT, price REAL);
 CREATE TABLE IF NOT EXISTS event_bookings(id INTEGER PRIMARY KEY AUTOINCREMENT, event_key TEXT, event_name TEXT, pickup_address TEXT, dropoff_address TEXT, pickup_zone TEXT, normalized_zone TEXT, pickup_lng REAL, pickup_lat REAL, event_date TEXT, date_display TEXT, pickup_time TEXT, passengers INT, ride_type TEXT, package_id TEXT, bus_route_id TEXT, car_id INT, selected_car TEXT, price REAL, discount_code TEXT, discount_percent REAL, final_price REAL, status TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_payments_provider_reference ON payments(provider_reference);
+CREATE TABLE IF NOT EXISTS damage_reports(id INTEGER PRIMARY KEY AUTOINCREMENT, booking_id INT, description TEXT, repair_cost REAL, reported_by INT, created_at TEXT);

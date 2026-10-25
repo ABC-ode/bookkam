@@ -1,212 +1,409 @@
 #!/usr/bin/env python3
-"""Local functional tests against a SQLite stand-in of the BOOKKAM schema.
-Runs the REAL PHP endpoint code from the latest main (copied to ./testbed).
-No network beyond 127.0.0.1, no production data, no real payments."""
-import json, sqlite3, subprocess, hmac, hashlib, urllib.request, urllib.error, sys, os
+"""BOOKKAM functional tests. Local only: no network beyond 127.0.0.1, no production data,
+no real payment credentials, no real payment provider.
 
-S = os.environ["SCRATCH"]
-BASE = "http://127.0.0.1:8099/api/"
-DB = S + "/tests/t.db"
-WEBHOOK_SECRET = "testbed-only-paystack"
-results = []
+It copies api/ to a temp dir, swaps ONLY config/db.php for a SQLite stand-in, creates a
+throw-away database from tests/functional/schema.sql and starts the real PHP code twice:
+  PROD server: APP_ENV=production  (simulator, test payments and test top-ups must be refused)
+  DEV  server: APP_ENV=development (payment simulator + test wallet credits available)
+Provider results are scripted by the development-only SimulatorPaymentProvider.
 
-def call(ep, action, body=None, token=None, method=None, qs="", raw=None, headers=None):
-    url = BASE + ep + "?action=" + action + qs
+Run from the repo root:   python3 tests/functional/run_tests.py
+Exit code is non-zero if any check fails. SQLite is a stand-in: MySQL-only SQL
+(request_payout DATE_SUB, discount-code FOR UPDATE) is not exercised, and SQLite locking only
+approximates MySQL row locking in the concurrency checks (invariants are asserted, not timing).
+"""
+import base64, concurrent.futures as cf, hashlib, hmac, json, os, re, shutil, sqlite3, subprocess
+import sys, tempfile, time, urllib.error, urllib.request
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+TMP = tempfile.mkdtemp(prefix="bookkam-test-")
+TESTBED = os.path.join(TMP, "testbed")
+DB = os.path.join(TMP, "t.db")
+JWT = "unit-test-jwt-secret-0123456789abcdef0123456789abcdef"
+PROD, DEV = "http://127.0.0.1:18099", "http://127.0.0.1:18098"
+results, procs = [], []
+
+# ───────────────────────── infrastructure ─────────────────────────
+STUB_DB = '''<?php
+$pdo = new PDO("sqlite:" . getenv("TESTBED_DB"), null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
+$pdo->sqliteCreateFunction("NOW", fn() => date("Y-m-d H:i:s"), 0);
+$pdo->sqliteCreateFunction("CURDATE", fn() => date("Y-m-d"), 0);
+'''
+
+def setup():
+    shutil.copytree(os.path.join(ROOT, "api"), TESTBED, ignore=shutil.ignore_patterns(".env", ".git"))
+    open(os.path.join(TESTBED, "config", "db.php"), "w").write(STUB_DB)
+    c = sqlite3.connect(DB)
+    c.executescript(open(os.path.join(ROOT, "tests", "functional", "schema.sql")).read())
+    c.commit(); c.close()
+
+def start(port, env_extra, docroot=None):
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("APP_ENV", "JWT_", "OPAY", "ADMIN_PORTAL"))}
+    env.update({"TESTBED_DB": DB, "PHP_CLI_SERVER_WORKERS": "4"}); env.update(env_extra)
+    p = subprocess.Popen(["php", "-S", "127.0.0.1:%d" % port, "-t", docroot or TESTBED], env=env,
+                         stdout=subprocess.DEVNULL, stderr=open(os.path.join(TMP, "server-%d.log" % port), "a"))
+    procs.append(p)
+    for _ in range(50):
+        try: urllib.request.urlopen("http://127.0.0.1:%d/" % port, timeout=1); break
+        except urllib.error.HTTPError: break
+        except Exception: time.sleep(0.1)
+    return p
+
+def stop(p):
+    p.terminate()
+    try: p.wait(5)
+    except Exception: p.kill()
+
+def call(base, ep, action, body=None, token=None, qs="", raw=None, headers=None):
+    url = base + "/api/" + ep + "?action=" + action + qs
     data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
-    req = urllib.request.Request(url, data=data, method=method or ("POST" if data is not None else "GET"))
+    req = urllib.request.Request(url, data=data, method="POST" if data is not None else "GET")
     req.add_header("Content-Type", "application/json")
     if token: req.add_header("Authorization", "Bearer " + token)
     for k, v in (headers or {}).items(): req.add_header(k, v)
     try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            code, txt = r.status, r.read().decode()
-    except urllib.error.HTTPError as e:
-        code, txt = e.code, e.read().decode()
+        with urllib.request.urlopen(req, timeout=20) as r: code, txt = r.status, r.read().decode()
+    except urllib.error.HTTPError as e: code, txt = e.code, e.read().decode()
     try: js = json.loads(txt)
     except Exception: js = {"_raw": txt[:200]}
     return code, js
 
+def P(*a, **k): return call(PROD, *a, **k)
+def D(*a, **k): return call(DEV, *a, **k)
+
 def db(sql, args=()):
-    c = sqlite3.connect(DB); c.row_factory = sqlite3.Row
-    rows = c.execute(sql, args).fetchall(); c.commit(); c.close()
-    return [dict(r) for r in rows]
+    c = sqlite3.connect(DB, timeout=30); c.row_factory = sqlite3.Row
+    try:
+        rows = c.execute(sql, args).fetchall(); c.commit()
+        return [dict(r) for r in rows]
+    finally:
+        c.close()  # always release the lock, even when the statement raises
 
 def check(name, ok, detail=""):
-    results.append((name, ok, detail))
-    print(("PASS " if ok else "FAIL ") + name + (" :: " + str(detail) if detail != "" else ""))
+    results.append((name, bool(ok), detail))
+    print(("PASS " if ok else "FAIL ") + name + ((" :: " + str(detail)[:230]) if (detail != "" and not ok) else ""))
 
-def webhook(event, ref, signed=True, secret=WEBHOOK_SECRET, amount=1500000):
-    d = {"reference": ref, "currency": "NGN"}
-    if amount is not None: d["amount"] = amount
-    payload = json.dumps({"event": event, "data": d}).encode()
-    sig = hmac.new(secret.encode(), payload, hashlib.sha512).hexdigest() if signed else "bad"
-    return call("payments.php", "webhook", raw=payload, headers={"x-paystack-signature": sig})
+def wallet(email): return db("SELECT wallet_balance w FROM users WHERE email=?", (email,))[0]["w"]
 
-# ---------- seed (test double only) ----------
-pw = subprocess.check_output(["php", "-r", "echo password_hash('Adm1n-test-only',PASSWORD_BCRYPT);"]).decode()
-db("INSERT INTO users(email,name,role,city,wallet_balance,password_hash) VALUES('admin@test.local','Test Admin','admin','Calabar',0,?)", (pw,))
-for t, col, v in [("hourly","per_hour_price",5000),("daily","per_day_price",30000)]:
-    db("INSERT INTO pricing(city,booking_type,%s) VALUES('Calabar',?,?)" % col, (t, v))
-db("INSERT INTO pricing(city,booking_type,base_price) VALUES('Calabar','chauffeur_trip',15000)")
+def make_jwt(secret, user_id, role, exp_delta=3600):
+    b = lambda d: base64.b64encode(json.dumps(d, separators=(",", ":")).encode()).decode()
+    h, p = b({"alg": "HS256", "typ": "JWT"}), b({"user_id": user_id, "role": role, "exp": int(time.time()) + exp_delta, "iat": int(time.time())})
+    sig = base64.urlsafe_b64encode(hmac.new(secret.encode(), (h + "." + p).encode(), hashlib.sha256).digest()).decode().rstrip("=")
+    return h + "." + p + "." + sig
 
-# ---------- 1. accounts ----------
-c, adm = call("auth.php", "admin_login", {"email": "admin@test.local", "password": "Adm1n-test-only"})
-check("admin login works", c == 200 and "token" in adm); AT = adm.get("token")
-c, cu = call("auth.php", "register_email", {"name": "Cust One", "email": "c1@test.local", "password": "secret123", "confirm": "secret123", "role": "customer", "city": "Calabar"})
-check("customer registers; welcome credit present", c == 200 and cu["user"]["wallet_balance"] == 1000, cu.get("user", {}).get("wallet_balance")); CT = cu["token"]
-c, cu2 = call("auth.php", "register_email", {"name": "Cust Two", "email": "c2@test.local", "password": "secret123", "confirm": "secret123", "role": "customer", "city": "Calabar"}); C2T = cu2["token"]
-c, dr = call("auth.php", "register_email", {"name": "Driver One", "email": "d1@test.local", "password": "secret123", "confirm": "secret123", "role": "driver", "city": "Calabar"})
-check("driver registers as pending", dr.get("driver_status") == "pending", dr.get("driver_status")); DT = dr["token"]
-drv_id = db("SELECT id FROM drivers")[0]["id"]
+def parallel(n, fn):
+    with cf.ThreadPoolExecutor(n) as ex: return list(ex.map(lambda _: fn(), range(n)))
 
-# ---------- 2. driver onboarding ----------
-c, r = call("cars.php", "driver_save", {"name": "Toyota Camry", "plate_number": "CAL-001", "year": 2019, "make": "Toyota", "model": "Camry"}, DT)
-check("driver can save car while still pending", c == 200 and r.get("success"), r)
-c, r = call("cars.php", "get_all", qs="&type=chauffeur&city=Calabar", token=CT)
-check("pending/offline driver's car NOT listed to customers", len(r.get("cars", [])) == 0, len(r.get("cars", [])))
-c, r = call("admin.php", "update_driver_status", {"driver_id": drv_id, "status": "active"}, AT); check("admin approves driver", c == 200 and r.get("success"), r)
-c, r = call("drivers.php", "toggle_online", {"is_online": 1}, DT); check("driver goes online", r.get("success"), r)
-c, r = call("cars.php", "get_all", qs="&type=chauffeur&city=Calabar", token=CT)
-check("active+online driver's car listed to customers", len(r.get("cars", [])) == 1, len(r.get("cars", []))); car_id = int(r["cars"][0]["id"])
+# ───────────────────────── run ─────────────────────────
+def main():
+    setup()
+    prod_env = {"APP_ENV": "production", "JWT_SECRET": JWT}
+    start(18099, prod_env); start(18098, dict(prod_env, APP_ENV="development"))
 
-# ---------- 3. customer booking journey ----------
-c, r = call("bookings.php", "create", {"car_id": car_id, "booking_type": "trip", "pickup_address": "", "dropoff_address": "x"}, CT); check("create without pickup is rejected", "error" in r, r)
-c, r = call("bookings.php", "create", {"booking_type": "trip", "pickup_address": "A"}, CT); check("create without car_id is rejected", "error" in r, r)
-c, r = call("bookings.php", "create", {"car_id": 999, "booking_type": "trip", "pickup_address": "A"}, CT); check("create for unknown car is rejected", "error" in r, r)
-c, b1 = call("bookings.php", "create", {"car_id": car_id, "booking_type": "trip", "pickup_address": "Marian Rd", "dropoff_address": "Airport", "duration_hours": 2, "city": "Calabar", "car_type": "chauffeur"}, CT)
-check("trip booking created; total matches pricing table (15000)", c == 200 and b1.get("total") == 15000, b1); B1 = int(b1.get("booking_id"))
-c, r = call("bookings.php", "get_my_bookings", token=CT); check("customer sees the booking as pending", any(x["id"] == B1 and x["status"] == "pending" for x in r.get("bookings", [])))
-c, r = call("bookings.php", "create", {"car_id": car_id, "booking_type": "trip", "pickup_address": "B"}, C2T); check("second customer cannot book the same car while it is held", "error" in r, r)
-c, r = call("bookings.php", "get_driver_bookings", token=DT); check("driver sees assigned pending booking", any(x["id"] == B1 and x["status"] == "pending" for x in r.get("bookings", [])))
+    # ---- accounts ----
+    pw = subprocess.check_output(["php", "-r", "echo password_hash('Adm1n-test-only',PASSWORD_BCRYPT);"]).decode()
+    db("INSERT INTO users(email,name,role,city,wallet_balance,password_hash) VALUES('admin@test.local','Test Admin','admin','Calabar',0,?)", (pw,))
+    for t, col, v in [("hourly", "per_hour_price", 5000), ("daily", "per_day_price", 30000)]:
+        db("INSERT INTO pricing(city,booking_type,%s) VALUES('Calabar',?,?)" % col, (t, v))
+    db("INSERT INTO pricing(city,booking_type,base_price) VALUES('Calabar','chauffeur_trip',15000)")
+    reg = lambda n, e, role: P("auth.php", "register_email", {"name": n, "email": e, "password": "secret123", "confirm": "secret123", "role": role, "city": "Calabar"})[1]
+    c, adm = P("auth.php", "admin_login", {"email": "admin@test.local", "password": "Adm1n-test-only"}); AT = adm.get("token")
+    check("admin login works", c == 200 and AT)
+    cu = reg("Cust One", "c1@test.local", "customer"); CT = cu["token"]
+    C2T = reg("Cust Two", "c2@test.local", "customer")["token"]
+    dr = reg("Driver One", "d1@test.local", "driver"); DT = dr["token"]
+    D2T = reg("Driver Two", "d2@test.local", "driver")["token"]
+    drv_id = db("SELECT id FROM drivers ORDER BY id")[0]["id"]
+    P("cars.php", "driver_save", {"name": "Toyota Camry", "plate_number": "CAL-001", "year": 2019, "make": "Toyota", "model": "Camry"}, DT)
+    P("admin.php", "update_driver_status", {"driver_id": drv_id, "status": "active"}, AT)
+    P("drivers.php", "toggle_online", {"is_online": 1}, DT)
+    c, r = P("cars.php", "get_all", qs="&type=chauffeur&city=Calabar", token=CT)
+    check("active+online driver's car listed to customers", len(r.get("cars", [])) == 1); car_id = int(r["cars"][0]["id"])
+    db("UPDATE users SET wallet_balance=0 WHERE role='customer'")
 
-# ---------- 4. payments: retry paths ----------
-c, r = call("payments.php", "initiate", {"booking_id": B1, "method": "cash", "booking_type": "website"}, CT)
-check("cash: payment row pending, booking stays pending", r.get("status") == "pending" and db("SELECT status FROM bookings WHERE id=?", (B1,))[0]["status"] == "pending", r)
-c, r = call("payments.php", "initiate", {"booking_id": B1, "method": "wallet", "booking_type": "website"}, CT)
-check("wallet with only the 1000 welcome credit is refused", "error" in r, r)
-db("UPDATE users SET wallet_balance=60000 WHERE email='c1@test.local'")  # test-double top-up (prod top-up needs Paystack)
-c, r = call("payments.php", "initiate", {"booking_id": B1, "method": "wallet", "booking_type": "website"}, CT)
-bk = db("SELECT status,payment_status FROM bookings WHERE id=?", (B1,))[0]
-check("retry via wallet after cash attempt succeeds; booking confirmed+paid", r.get("success") and bk == {"status": "confirmed", "payment_status": "paid"}, bk)
-rows = db("SELECT method,status FROM payments WHERE booking_id=?", (B1,)); print("   payments rows:", rows)
-check("[DEFECT?] stale cash 'pending' row left beside the successful wallet row", any(p["method"] == "cash" and p["status"] == "pending" for p in rows) and any(p["method"] == "wallet" and p["status"] == "success" for p in rows))
-bal = db("SELECT wallet_balance FROM users WHERE email='c1@test.local'")[0]["wallet_balance"]
-c, r = call("payments.php", "initiate", {"booking_id": B1, "method": "wallet", "booking_type": "website"}, CT)
-bal2 = db("SELECT wallet_balance FROM users WHERE email='c1@test.local'")[0]["wallet_balance"]
-check("[DEFECT?] paying an already-paid booking is refused", "error" in r and bal2 == bal, "balance %s -> %s, resp=%s" % (bal, bal2, r))
+    def new_booking(token=CT, addr="Marian Rd"):
+        c, b = P("bookings.php", "create", {"car_id": car_id, "booking_type": "trip", "pickup_address": addr, "city": "Calabar"}, token)
+        return int(b["booking_id"]) if "booking_id" in b else None
+    def free_car():
+        db("UPDATE bookings SET status='cancelled' WHERE car_id=? AND status IN ('pending','confirmed','active')", (car_id,))
+        db("UPDATE cars SET is_available=1 WHERE id=?", (car_id,))
+    def bk(i): return db("SELECT status,payment_status FROM bookings WHERE id=?", (i,))[0]
+    def sim(booking, scenario, server=D, token=CT, btype="website"):
+        c, r = server("payments.php", "initiate", {"booking_id": booking, "method": "simulator", "scenario": scenario, "booking_type": btype}, token)
+        return r.get("reference"), c, r
 
-# ---------- 5. driver workflow ----------
-c, r = call("bookings.php", "update_status", {"booking_id": B1, "status": "active"}, DT); check("driver starts trip (active)", c == 200 and r.get("success"), r)
-c, r = call("bookings.php", "update_status", {"booking_id": B1, "status": "completed"}, DT); check("driver completes trip", c == 200 and r.get("success"), r)
-car = db("SELECT is_available FROM cars WHERE id=?", (car_id,))[0]; check("car released after completion", car["is_available"] == 1, car)
-c, r = call("drivers.php", "get_earnings", qs="&period=today", token=DT); print("   earnings:", r.get("earnings"))
-check("driver earnings reflect the completed trip (15000 total, 3000 commission)", r.get("earnings", {}).get("total") == 15000 and r["earnings"]["commission"] == 3000, r.get("earnings"))
-c, r = call("bookings.php", "update_status", {"booking_id": B1, "status": "bogus"}, DT); check("invalid status rejected", "error" in r, r)
-print("SKIP driver payout request: endpoint uses MySQL-only DATE_SUB(...INTERVAL) which SQLite cannot parse (not testable here)")
+    # ================= A. BOOKING SECURITY =================
+    B1 = new_booking()
+    check("A: trip booking priced from the server table (15000)", db("SELECT total_price t FROM bookings WHERE id=?", (B1,))[0]["t"] == 15000)
+    free_car()
+    c, b = P("bookings.php", "create", {"car_id": car_id, "booking_type": "trip", "pickup_address": "Tamper", "city": "Calabar", "total_price": 1, "price": 1, "amount": 1, "customer_id": 99}, CT)
+    tb = db("SELECT total_price t, customer_id c FROM bookings WHERE id=?", (int(b["booking_id"]),))[0]
+    check("A: client-supplied price/customer_id ignored on booking create", tb["t"] == 15000 and tb["c"] != 99, tb)
+    free_car(); B1 = new_booking(); P("payments.php", "initiate", {"booking_id": B1, "method": "cash", "booking_type": "website"}, CT)
 
-# ---------- 6. Paystack path: failure / success / duplicate (webhook simulated) ----------
-c, b2 = call("bookings.php", "create", {"car_id": car_id, "booking_type": "trip", "pickup_address": "Calabar Mall", "city": "Calabar"}, CT); B2 = int(b2["booking_id"])
-ref2 = "BKM-WEBSITE-%d-1700000001" % B2
-db("INSERT INTO payments(booking_id,booking_kind,amount,deposit_amount,method,status,is_test,paystack_reference) VALUES(?,?,?,?,?,?,?,?)", (B2, "website", 15000, 0, "paystack", "pending", 0, ref2))  # what initiate would write
-c, r = webhook("charge.success", ref2, signed=False); check("webhook with bad signature rejected (401)", c == 401, c)
-c, r = webhook("charge.failed", ref2); st = db("SELECT status FROM bookings WHERE id=?", (B2,))[0]["status"]; pst = db("SELECT status FROM payments WHERE paystack_reference=?", (ref2,))[0]["status"]
-check("[OPEN] failed charge is recorded (payment marked failed; status enum unknown)", pst == "failed", "payment status after charge.failed = %s, booking = %s" % (pst, st))
-c, r = webhook("charge.success", ref2); bk = db("SELECT status,payment_status FROM bookings WHERE id=?", (B2,))[0]
-check("success webhook confirms booking and marks paid", bk == {"status": "confirmed", "payment_status": "paid"}, bk)
-c, r = webhook("charge.success", ref2); n = db("SELECT COUNT(*) n FROM payments WHERE paystack_reference=?", (ref2,))[0]["n"]
-check("duplicate webhook is harmless (no extra rows)", c == 200 and n == 1, n)
-c, r = call("payments.php", "initiate", {"booking_id": B2, "method": "opay", "booking_type": "website"}, CT); check("OPay is off: clear error", "error" in r, r.get("error"))
+    c, r = P("bookings.php", "get_one", qs="&id=%d" % B1, token=C2T); check("A: customer cannot read another customer's booking", "error" in r and "booking" not in r, r)
+    c, r = P("bookings.php", "get_one", qs="&id=%d" % B1, token=CT); check("A: owner can read own booking", "booking" in r)
+    c, r = P("bookings.php", "get_my_bookings", token=C2T); check("A: booking list never shows another customer's bookings", all(x["id"] != B1 for x in r.get("bookings", [])))
+    c, r = P("bookings.php", "update_status", {"booking_id": B1, "status": "cancelled"}, C2T); check("A: other customer cannot change status", c == 403, (c, r))
+    c, r = P("bookings.php", "update_status", {"booking_id": B1, "status": "cancelled"}, CT); check("A: customer cannot use update_status (must use cancel)", c == 403, (c, r))
+    c, r = P("bookings.php", "update_status", {"booking_id": B1, "status": "confirmed"}, D2T); check("A: unrelated driver cannot act on the booking", c == 403, (c, r))
+    c, r = P("bookings.php", "update_status", {"booking_id": B1, "status": "completed"}, DT); check("A: invalid transition pending->completed refused (driver)", "error" in r and bk(B1)["status"] == "pending", r)
+    c, r = P("bookings.php", "update_status", {"booking_id": B1, "status": "bogus"}, DT); check("A: unknown status value rejected", "error" in r, r)
+    c, r = P("bookings.php", "release_deposit", {"booking_id": B1}, CT); check("A: customer cannot release a deposit", c == 403, (c, r))
+    c, r = P("admin.php", "get_customers", token=CT); check("A: customer token cannot use admin endpoints", c == 403, c)
+    c, r = P("admin.php", "get_customers"); check("A: anonymous cannot use admin endpoints", c == 401, c)
+    c, r = P("bookings.php", "update_status", {"booking_id": B1, "status": "confirmed"}, DT); check("A: assigned driver can confirm", r.get("success"), r)
+    c, r = P("bookings.php", "update_status", {"booking_id": B1, "status": "active"}, DT); check("A: driver starts trip", r.get("success"), r)
+    c, r = P("bookings.php", "update_status", {"booking_id": B1, "status": "completed"}, DT); check("A: driver completes trip", r.get("success"), r)
+    c, r = P("bookings.php", "update_status", {"booking_id": B1, "status": "active"}, DT); check("A: completed booking cannot go back to active", "error" in r and bk(B1)["status"] == "completed", r)
+    c, r = P("bookings.php", "update_status", {"booking_id": B1, "status": "cancelled"}, AT); check("A: completed booking cannot be cancelled even by admin", "error" in r and bk(B1)["status"] == "completed", r)
+    check("A: car released after completion", db("SELECT is_available a FROM cars WHERE id=?", (car_id,))[0]["a"] == 1)
+    c, r = P("drivers.php", "get_earnings", qs="&period=today", token=DT)
+    check("A: driver earnings 15000 total / 3000 commission", r.get("earnings", {}).get("total") == 15000 and r["earnings"]["commission"] == 3000, r.get("earnings"))
 
-# ---------- 7. cancellation + consistency ----------
-c, r = call("bookings.php", "cancel", {"booking_id": B2}, CT); check("customer can cancel a confirmed, paid booking", r.get("success"), r)
-pay = db("SELECT status FROM payments WHERE paystack_reference=?", (ref2,))[0]["status"]
-wref = db("SELECT wallet_balance w FROM users WHERE email='c1@test.local'")[0]["w"]
-check("cancelling a PAID booking refunds the customer's wallet (FIXED)", r.get("refunded") == 15000, "refunded=%s (payment row stays '%s' as the audit trail)" % (r.get("refunded"), pay))
-c, b3 = call("bookings.php", "create", {"car_id": car_id, "booking_type": "trip", "pickup_address": "Ikom Rd", "city": "Calabar"}, CT); B3 = int(b3["booking_id"])
-c, r = call("bookings.php", "cancel", {"booking_id": B3}, CT)
-c, r = call("payments.php", "initiate", {"booking_id": B3, "method": "cash", "booking_type": "website"}, CT)
-check("[DEFECT?] payment cannot be started for a CANCELLED booking", "error" in r, r)
-ref3 = "BKM-WEBSITE-%d-1700000003" % B3
-db("INSERT INTO payments(booking_id,booking_kind,amount,deposit_amount,method,status,is_test,paystack_reference) VALUES(?,?,?,?,?,?,?,?)", (B3, "website", 15000, 0, "paystack", "pending", 0, ref3))
-webhook("charge.success", ref3); bk3 = db("SELECT status FROM bookings WHERE id=?", (B3,))[0]["status"]
-check("[DEFECT?] late payment does not revive a cancelled booking", bk3 == "cancelled", "booking status after late success = %s" % bk3)
-carS = db("SELECT is_available FROM cars WHERE id=?", (car_id,))[0]["is_available"]
-c, b4 = call("bookings.php", "create", {"car_id": car_id, "booking_type": "trip", "pickup_address": "Second", "city": "Calabar"}, C2T)
-live = db("SELECT COUNT(*) n FROM bookings WHERE car_id=? AND status IN ('pending','confirmed','active')", (car_id,))[0]["n"]
-check("[DEFECT?] car cannot end up with two live bookings", live <= 1, "live bookings on one car = %d (revived B3 confirmed + new B4; car flag was %s)" % (live, carS))
+    # availability + double booking
+    free_car(); B2 = new_booking()
+    check("A: car held while a booking is open", db("SELECT is_available a FROM cars WHERE id=?", (car_id,))[0]["a"] == 0)
+    c, r = P("bookings.php", "create", {"car_id": car_id, "booking_type": "trip", "pickup_address": "B", "city": "Calabar"}, C2T)
+    check("A: second customer cannot book the held car", "error" in r, r)
+    c, r = P("bookings.php", "cancel", {"booking_id": B2}, CT)
+    check("A: cancel releases the car", r.get("success") and db("SELECT is_available a FROM cars WHERE id=?", (car_id,))[0]["a"] == 1, r)
+    c, r = P("bookings.php", "cancel", {"booking_id": B2}, CT); check("A: repeated cancellation refused", "error" in r, r)
 
-# ---------- 8. self-drive rental ----------
-c, r = call("cars.php", "admin_add", {"name": "Self Drive Prado", "car_type": "self_drive", "plate_number": "SD-01", "city": "Calabar", "security_deposit": 20000}, AT); SD = int(r.get("id")); check("admin adds self-drive car", r.get("success"), r)
-c, r = call("cars.php", "get_all", qs="&type=self_drive&city=Calabar&available=1", token=CT); check("self-drive car listed", len(r.get("cars", [])) == 1)
-c, s1 = call("bookings.php", "create", {"car_id": SD, "booking_type": "daily", "pickup_address": "Office", "duration_days": 2, "duration_hours": 4, "city": "Calabar", "car_type": "self_drive"}, CT)
-check("daily rental: total 60000 + deposit 20000", s1.get("total") == 60000 and s1.get("deposit") == 20000 and s1.get("total_with_deposit") == 80000, s1)
-db("UPDATE users SET wallet_balance=100000 WHERE email='c1@test.local'")
-c, r = call("payments.php", "initiate", {"booking_id": int(s1["booking_id"]), "method": "wallet", "booking_type": "website"}, CT)
-w = db("SELECT wallet_balance FROM users WHERE email='c1@test.local'")[0]["wallet_balance"]; check("wallet pays total+deposit (80000)", r.get("success") and w == 20000, "balance now %s" % w)
-call("bookings.php", "update_status", {"booking_id": int(s1["booking_id"]), "status": "completed"}, AT)
-c, r = call("bookings.php", "release_deposit", {"booking_id": int(s1["booking_id"])}, AT); w2 = db("SELECT wallet_balance FROM users WHERE email='c1@test.local'")[0]["wallet_balance"]; check("admin releases deposit to wallet (+20000)", r.get("success") and w2 == 40000, "balance %s" % w2)
+    # paid booking cancel + refund exactly once, concurrent cancel
+    free_car(); db("UPDATE users SET wallet_balance=50000 WHERE email='c1@test.local'")
+    B3 = new_booking(); P("payments.php", "initiate", {"booking_id": B3, "method": "wallet", "booking_type": "website"}, CT)
+    check("A: wallet payment debits once (50000->35000), booking confirmed+paid", wallet("c1@test.local") == 35000 and bk(B3) == {"status": "confirmed", "payment_status": "paid"}, wallet("c1@test.local"))
+    c, r = P("payments.php", "initiate", {"booking_id": B3, "method": "wallet", "booking_type": "website"}, CT)
+    check("A: duplicate wallet payment refused, no second debit", "error" in r and wallet("c1@test.local") == 35000, r)
+    res = parallel(6, lambda: P("bookings.php", "cancel", {"booking_id": B3}, CT)[1])
+    check("A: concurrent cancellation refunds exactly once (35000->50000)", wallet("c1@test.local") == 50000 and bk(B3)["status"] == "cancelled",
+          "wallet=%s status=%s ok=%d" % (wallet("c1@test.local"), bk(B3)["status"], sum(1 for x in res if x.get("success"))))
+    check("A: at most one concurrent cancel reported success", sum(1 for x in res if x.get("success")) == 1)
+    c, r = P("bookings.php", "update_status", {"booking_id": B3, "status": "confirmed"}, AT); check("A: cancelled booking cannot be revived", "error" in r and bk(B3)["status"] == "cancelled", r)
 
-# ---------- 9. buttons that cannot work in production mode ----------
-c, r = call("payments.php", "initiate", {"booking_id": B1, "method": "test", "booking_type": "website"}, CT); check("[OPEN, frontend] 'Simulate Payment' is refused server-side in production (button still shown to customers)", "error" in r, r.get("error"))
-c, r = call("payments.php", "top_up_wallet", {"amount": 5000}, CT); check("[OPEN, out of scope] wallet top-up works in production", "error" not in r, r.get("error"))
-c, r = call("payments.php", "get_methods"); check("get_methods reflects Paystack configured", r.get("paystack") is True)
+    # self-drive deposit
+    c, r = P("cars.php", "admin_add", {"name": "Prado", "car_type": "self_drive", "plate_number": "SD-01", "city": "Calabar", "security_deposit": 20000}, AT); SD = int(r["id"])
+    db("UPDATE users SET wallet_balance=100000 WHERE email='c1@test.local'")
+    c, s1 = P("bookings.php", "create", {"car_id": SD, "booking_type": "daily", "pickup_address": "Office", "duration_days": 2, "city": "Calabar", "car_type": "self_drive"}, CT)
+    check("A: rental total 60000 + deposit 20000", s1.get("total") == 60000 and s1.get("deposit") == 20000, s1); S1 = int(s1["booking_id"])
+    P("payments.php", "initiate", {"booking_id": S1, "method": "wallet", "booking_type": "website"}, CT)
+    check("A: wallet pays total+deposit (100000->20000)", wallet("c1@test.local") == 20000, wallet("c1@test.local"))
+    c, r = P("bookings.php", "release_deposit", {"booking_id": S1}, AT); check("A: deposit cannot be released before completion", "error" in r and wallet("c1@test.local") == 20000, r)
+    P("bookings.php", "update_status", {"booking_id": S1, "status": "completed"}, AT)
+    res = parallel(5, lambda: P("bookings.php", "release_deposit", {"booking_id": S1}, AT)[1])
+    check("A: concurrent deposit release credits exactly once (+20000)", wallet("c1@test.local") == 40000 and sum(1 for x in res if x.get("success")) == 1, wallet("c1@test.local"))
+    db("UPDATE bookings SET deposit_released=0, deposit_refund_amount=NULL WHERE id=?", (S1,)); db("UPDATE users SET wallet_balance=0 WHERE email='c1@test.local'")
+    c, r1 = P("admin.php", "add_damage_report", {"booking_id": S1, "description": "dent", "repair_cost": 5000}, AT)
+    c, r2 = P("admin.php", "add_damage_report", {"booking_id": S1, "description": "dent again", "repair_cost": 5000}, AT)
+    check("A: repeated damage report cannot credit the deposit twice (15000 once)", wallet("c1@test.local") == 15000, wallet("c1@test.local"))
+    c, r = P("admin.php", "add_damage_report", {"booking_id": S1, "description": "neg", "repair_cost": -50}, AT); check("A: negative repair cost rejected", "error" in r, r)
 
-# ---------- 10. driver-side gaps ----------
-call("drivers.php", "toggle_online", {"is_online": 0}, DT); call("admin.php", "update_driver_status", {"driver_id": drv_id, "status": "suspended"}, AT)
-db("UPDATE bookings SET status='cancelled' WHERE car_id=?", (car_id,)); db("UPDATE cars SET is_available=1 WHERE id=?", (car_id,))
-c, r = call("bookings.php", "create", {"car_id": car_id, "booking_type": "trip", "pickup_address": "X", "city": "Calabar"}, CT)
-check("[DEFECT?] cannot book a car whose driver is offline AND suspended", "error" in r, r)
+    # event pricing
+    db("INSERT INTO car_location_pricing(car_id,location,price) VALUES(?,?,?)", (car_id, "Municipal", 12000))
+    ev = {"event": "grovveyard", "event_name": "Test Event", "pickup_address": "A", "dropoff_address": "B", "zone": "municipal", "zone_label": "Municipal", "date": "2026-12-01", "time": "20:00", "passengers": 2, "car_id": car_id, "selected_car": "Camry", "price": 1}
+    c, r = P("event-booking.php", "", ev); check("A: event price comes from the database (client sent 1)", r.get("final_price") == 12000, r)
+    c, r = P("event-booking.php", "", dict(ev, zone_label="Nowhere")); check("A: event booking refused when no authoritative price exists", "error" in r, r)
+    c, r = P("event-booking.php", "", dict(ev, price=-5)); check("A: negative client price cannot reduce the price", r.get("final_price") == 12000 or "error" in r, r)
+    c, r = P("event-booking.php", "", dict(ev, passengers=0)); check("A: invalid passenger count rejected", "error" in r, r)
+    c, r = P("event-booking.php", "", dict(ev, date="tomorrow")); check("A: invalid date rejected", "error" in r, r)
+    c, r = P("event-booking.php", "", dict(ev, car_id=0)); check("A: missing car for a non-package event rejected", "error" in r, r)
+    # SQL-injection-shaped input must not break or leak
+    c, r = P("event-booking.php", "", dict(ev, pickup_address="x'); DROP TABLE bookings;--")); check("A: injection-shaped text stored literally, tables intact", db("SELECT COUNT(*) n FROM bookings")[0]["n"] > 0 and r.get("success"), r)
 
-# ---------- 11. regression checks for the payment / security fixes ----------
-# cancel of a paid booking refunds exactly once
-db("UPDATE drivers SET status='active', is_online=1 WHERE id=?", (drv_id,)); db("UPDATE cars SET is_available=1 WHERE id=?", (car_id,)); db("UPDATE bookings SET status='cancelled' WHERE car_id=? AND status IN ('pending','confirmed')", (car_id,))
-db("UPDATE users SET wallet_balance=50000 WHERE email='c1@test.local'")
-c, b5 = call("bookings.php", "create", {"car_id": car_id, "booking_type": "trip", "pickup_address": "Refund test", "city": "Calabar"}, CT); B5 = int(b5["booking_id"])
-call("payments.php", "initiate", {"booking_id": B5, "method": "wallet", "booking_type": "website"}, CT)
-w0 = db("SELECT wallet_balance FROM users WHERE email='c1@test.local'")[0]["wallet_balance"]
-check("wallet pay debits exactly once (50000 -> 35000)", w0 == 35000, w0)
-c, r = call("payments.php", "initiate", {"booking_id": B5, "method": "wallet", "booking_type": "website"}, CT)
-check("second wallet payment on a paid booking refused, no extra charge", "error" in r and db("SELECT wallet_balance w FROM users WHERE email='c1@test.local'")[0]["w"] == 35000, r)
-c, r = call("payments.php", "initiate", {"booking_id": B5, "method": "paystack", "booking_type": "website"}, CT)
-check("paystack/test-mode payment on a paid booking refused", "error" in r, r)
-c, r = call("bookings.php", "cancel", {"booking_id": B5}, CT)
-w1 = db("SELECT wallet_balance FROM users WHERE email='c1@test.local'")[0]["wallet_balance"]
-check("cancel refunds the paid amount to the wallet (35000 -> 50000)", r.get("success") and w1 == 50000, (r, w1))
-c, r = call("bookings.php", "cancel", {"booking_id": B5}, CT)
-w2 = db("SELECT wallet_balance FROM users WHERE email='c1@test.local'")[0]["wallet_balance"]
-check("cancelling twice does not refund twice", "error" in r and w2 == 50000, (r, w2))
-c, r = call("bookings.php", "update_status", {"booking_id": B5, "status": "confirmed"}, AT)
-check("a cancelled booking cannot be revived via update_status", "error" in r, r)
-# webhook integrity
-c, b6 = call("bookings.php", "create", {"car_id": car_id, "booking_type": "trip", "pickup_address": "Webhook test", "city": "Calabar"}, CT); B6 = int(b6["booking_id"])
-ref6 = "BKM-WEBSITE-%d-1700000006" % B6
-db("INSERT INTO payments(booking_id,booking_kind,amount,deposit_amount,method,status,is_test,paystack_reference) VALUES(?,?,?,?,?,?,?,?)", (B6, "website", 15000, 0, "paystack", "pending", 0, ref6))
-webhook("charge.success", ref6, amount=100)
-check("underpaid webhook (100 kobo) does not confirm the booking", db("SELECT status FROM bookings WHERE id=?", (B6,))[0]["status"] == "pending")
-webhook("charge.success", ref6, amount=None)
-check("webhook without an amount does not confirm in production", db("SELECT status FROM bookings WHERE id=?", (B6,))[0]["status"] == "pending")
-webhook("charge.success", ref6, secret="wrong-secret")
-check("webhook signed with the wrong secret is rejected", db("SELECT status FROM bookings WHERE id=?", (B6,))[0]["status"] == "pending")
-webhook("charge.success", ref6)
-check("correctly signed, correct-amount webhook confirms", db("SELECT status,payment_status FROM bookings WHERE id=?", (B6,))[0] == {"status": "confirmed", "payment_status": "paid"})
-# authorisation on status changes
-c, r = call("bookings.php", "update_status", {"booking_id": B6, "status": "completed"}, C2T)
-check("another customer cannot change someone else's booking status", c == 403, (c, r))
-c, r = call("bookings.php", "update_status", {"booking_id": B6, "status": "cancelled"}, CT)
-check("customer cannot use update_status (must use cancel)", c == 403, (c, r))
-c, r = call("bookings.php", "get_one", qs="&id=%d" % B6, token=C2T)
-check("another customer cannot read someone else's booking", "error" in r, r)
-c, r = call("bookings.php", "get_one", qs="&id=%d" % B6, token=CT); check("owner can read own booking", "booking" in r, r)
-# deposit release idempotent
-c, r = call("bookings.php", "release_deposit", {"booking_id": int(s1["booking_id"])}, AT)
-check("deposit cannot be released twice", "error" in r, r)
-# event booking: server-side price
-db("INSERT INTO car_location_pricing(car_id,location,price) VALUES(?,?,?)", (car_id, "Municipal", 12000))
-ev = {"event": "grovveyard", "event_name": "Test Event", "pickup_address": "A", "dropoff_address": "B", "zone": "municipal", "zone_label": "Municipal", "date": "2026-12-01", "time": "20:00", "passengers": 2, "car_id": car_id, "selected_car": "Camry", "price": 1}
-c, r = call("event-booking.php", "", ev)
-check("event booking ignores the client price (sent 1, charged 12000)", r.get("success") and r.get("final_price") == 12000, r)
-ev2 = dict(ev, zone_label="Nowhere", price=5)
-c, r = call("event-booking.php", "", ev2); check("event booking with no admin price is refused (negotiate)", "error" in r, r)
-ev3 = dict(ev, price=-5); c, r = call("event-booking.php", "", ev3); check("negative client price cannot produce a negative booking", r.get("final_price") == 12000 or "error" in r, r)
+    # driver offline/suspended
+    P("drivers.php", "toggle_online", {"is_online": 0}, DT); free_car()
+    c, r = P("bookings.php", "create", {"car_id": car_id, "booking_type": "trip", "pickup_address": "X", "city": "Calabar"}, CT)
+    check("A: cannot book a car whose driver is offline", "error" in r, r)
+    P("drivers.php", "toggle_online", {"is_online": 1}, DT)
 
-print("\nSUMMARY: %d checks, %d pass, %d fail" % (len(results), sum(1 for _, o, _ in results if o), sum(1 for _, o, _ in results if not o)))
+    # ================= B. PAYMENT SECURITY (provider results scripted by the simulator) =================
+    free_car(); db("UPDATE users SET wallet_balance=0 WHERE email='c1@test.local'")
+    bid = new_booking(); ref, c, r = sim(bid, "success")
+    check("B: initiation alone does not confirm a booking", c == 200 and bk(bid)["status"] == "pending" and db("SELECT status s FROM payments WHERE provider_reference=?", (ref,))[0]["s"] == "pending", r)
+    c, r = D("payments.php", "verify", qs="&reference=" + ref); check("B: verified success settles booking (confirmed+paid)", r.get("status") == "success" and bk(bid) == {"status": "confirmed", "payment_status": "paid"}, r)
+    check("B: payment row success stored under provider_reference", db("SELECT status s, method m, is_test t FROM payments WHERE provider_reference=?", (ref,))[0] == {"s": "success", "m": "test", "t": 1})
+    c, r = D("payments.php", "verify", qs="&reference=" + ref); n = db("SELECT COUNT(*) n FROM payments WHERE provider_reference=?", (ref,))[0]["n"]
+    check("B: duplicate verification is harmless (one row, no wallet change)", r.get("status") == "success" and n == 1 and wallet("c1@test.local") == 0, r)
+    P("bookings.php", "cancel", {"booking_id": bid}, CT); free_car(); db("UPDATE users SET wallet_balance=0 WHERE email='c1@test.local'")
+
+    for scenario, code, expect_status in [("mismatch", 409, "mismatch"), ("currency", 409, "mismatch"), ("malformed", 409, "mismatch"),
+                                          ("failed", 402, "failed"), ("cancelled", 402, "cancelled"), ("pending", 202, "pending"), ("timeout", 502, "unavailable")]:
+        free_car(); b_ = new_booking(); ref_, _, _ = sim(b_, scenario)
+        c, r = D("payments.php", "verify", qs="&reference=" + ref_)
+        check("B: provider result '%s' -> HTTP %d, booking untouched" % (scenario, code), c == code and r.get("status") == expect_status and bk(b_) == {"status": "pending", "payment_status": "unpaid"} and
+              db("SELECT status s FROM payments WHERE provider_reference=?", (ref_,))[0]["s"] == "pending", (c, r, bk(b_)))
+    free_car(); b_ = new_booking()
+    c, r = D("payments.php", "verify", qs="&reference=SIM-success-1500000-doesnotexist"); check("B: unknown provider reference -> 404, nothing changes", c == 404 and bk(b_)["status"] == "pending", (c, r))
+    c, r = D("payments.php", "verify", qs="&reference=garbage"); check("B: unrecognised reference format rejected", c == 404, (c, r))
+    c, r = D("payments.php", "verify"); check("B: missing reference rejected", "error" in r, r)
+
+    # concurrent duplicate verification settles once
+    P("bookings.php", "cancel", {"booking_id": b_}, CT); free_car(); db("UPDATE users SET wallet_balance=0 WHERE email='c1@test.local'")
+    b_ = new_booking(); ref_, _, _ = sim(b_, "success")
+    res = parallel(6, lambda: D("payments.php", "verify", qs="&reference=" + ref_))
+    check("B: concurrent duplicate verification settles exactly once", bk(b_) == {"status": "confirmed", "payment_status": "paid"} and wallet("c1@test.local") == 0 and
+          db("SELECT COUNT(*) n FROM payments WHERE provider_reference=? AND status='success'", (ref_,))[0]["n"] == 1, [x[0] for x in res])
+
+    # payment for ineligible bookings
+    P("bookings.php", "cancel", {"booking_id": b_}, CT)
+    c, r = D("payments.php", "initiate", {"booking_id": b_, "method": "simulator", "scenario": "success", "booking_type": "website"}, CT); check("B: cancelled booking cannot be paid", "error" in r, r)
+    c, r = D("payments.php", "initiate", {"booking_id": b_, "method": "wallet", "booking_type": "website"}, CT); check("B: cancelled booking cannot be paid by wallet", "error" in r, r)
+    c, r = D("payments.php", "initiate", {"booking_id": b_, "method": "cash", "booking_type": "website"}, C2T); check("B: another customer cannot start a payment on this booking", "error" in r, r)
+    c, r = D("payments.php", "initiate", {"booking_id": b_, "method": "cash", "booking_type": "website"}); check("B: anonymous cannot start a website payment", c == 401, c)
+
+    # late payment on a cancelled booking -> wallet credit, booking stays cancelled, once
+    free_car(); db("UPDATE users SET wallet_balance=0 WHERE email='c1@test.local'")
+    b_ = new_booking(); ref_, _, _ = sim(b_, "success"); P("bookings.php", "cancel", {"booking_id": b_}, CT)
+    c, r = D("payments.php", "verify", qs="&reference=" + ref_)
+    check("B: late payment on cancelled booking is credited to the wallet, booking stays cancelled", bk(b_)["status"] == "cancelled" and wallet("c1@test.local") == 15000 and r.get("status") == "refunded", (bk(b_), wallet("c1@test.local"), r))
+    D("payments.php", "verify", qs="&reference=" + ref_)
+    check("B: repeating the late payment does not credit twice", wallet("c1@test.local") == 15000, wallet("c1@test.local"))
+    check("B: late-payment policy: car not re-held by a cancelled booking", db("SELECT is_available a FROM cars WHERE id=?", (car_id,))[0]["a"] == 1)
+
+    # settlement failure: a DB error while settling must roll back everything (payment stays pending)
+    free_car(); db("UPDATE users SET wallet_balance=0 WHERE email='c1@test.local'")
+    b_ = new_booking(); ref_, _, _ = sim(b_, "success")
+    db("CREATE TRIGGER fail_settle BEFORE UPDATE OF payment_status ON bookings BEGIN SELECT RAISE(ABORT,'forced settlement failure'); END;")
+    c, r = D("payments.php", "verify", qs="&reference=" + ref_)
+    st = db("SELECT status s FROM payments WHERE provider_reference=?", (ref_,))[0]["s"]
+    check("B: settlement failure -> 500, payment stays pending, booking not confirmed, wallet unchanged", c == 500 and st == "pending" and bk(b_)["status"] == "pending" and wallet("c1@test.local") == 0, (c, st, bk(b_)))
+    db("DROP TRIGGER fail_settle")
+    c, r = D("payments.php", "verify", qs="&reference=" + ref_); check("B: after the fault clears, retry settles correctly", r.get("status") == "success" and bk(b_)["payment_status"] == "paid", r)
+
+    # production safety of payment endpoints
+    free_car(); b_ = new_booking()
+    c, r = P("payments.php", "initiate", {"booking_id": b_, "method": "simulator", "scenario": "success", "booking_type": "website"}, CT); check("B: simulator refused in production", c == 403, (c, r))
+    c, r = P("payments.php", "initiate", {"booking_id": b_, "method": "test", "booking_type": "website"}, CT); check("B: 'test' payments refused in production", "error" in r and bk(b_)["payment_status"] == "unpaid", r)
+    c, r = P("payments.php", "verify", qs="&reference=SIM-success-1500000-x"); check("B: simulator references are unknown in production", c == 404, (c, r))
+    c, r = P("payments.php", "initiate", {"booking_id": b_, "method": "opay", "booking_type": "website"}, CT); check("B: OPay disabled -> 503, no payment row", c == 503 and db("SELECT COUNT(*) n FROM payments WHERE booking_id=? AND method='opay'", (b_,))[0]["n"] == 0, (c, r))
+    c, r = P("payments.php", "initiate", {"booking_id": b_, "method": "paystack", "booking_type": "website"}, CT); check("B: Paystack no longer accepted as a method", "error" in r, r)
+    c, r = P("payments.php", "webhook", raw=b'{"event":"charge.success","data":{"reference":"x","amount":1,"currency":"NGN"}}'); check("B: legacy Paystack webhook endpoint is gone", c == 400 and "error" in r, (c, r))
+    ref_, _, _ = sim(b_, "success")
+    c, r = P("payments.php", "opay_webhook", raw=json.dumps({"reference": ref_}).encode(), headers={"x-signature": "forged"})
+    check("B: forged OPay webhook (provider disabled) changes nothing", c == 200 and bk(b_)["payment_status"] == "unpaid", (c, r))
+    c, r = D("payments.php", "opay_webhook", raw=json.dumps({"reference": ref_}).encode()); check("B: OPay webhook cannot settle a non-OPay reference", bk(b_)["payment_status"] == "unpaid", (c, r))
+    c, r = P("payments.php", "initiate", {"booking_id": b_, "method": "cash", "booking_type": "website"}, CT); c, r = P("payments.php", "initiate", {"booking_id": b_, "method": "cash", "booking_type": "website"}, CT)
+    check("B: repeated cash initiation keeps a single pending row", db("SELECT COUNT(*) n FROM payments WHERE booking_id=? AND method='cash'", (b_,))[0]["n"] == 1)
+    check("B: unique index rejects a duplicate provider reference (migration 007 equivalent)", _dup_rejected())
+    # event booking payment on the DEV simulator
+    c, ev_r = P("event-booking.php", "", ev); EB = ev_r["booking_id"]
+    ref_, c, r = sim(EB, "success", token=None, btype="event")
+    c, r = D("payments.php", "verify", qs="&reference=" + ref_)
+    check("B: event booking settles via verified provider result", r.get("status") == "success" and db("SELECT status s FROM event_bookings WHERE id=?", (EB,))[0]["s"] == "confirmed", r)
+    ref2, _, _ = sim(EB, "success", token=None, btype="event")
+    check("B: confirmed event booking cannot be paid again", ref2 is None)
+    # fixed payment_status values
+    check("B: payment_status only ever 'paid' or 'unpaid' in tests", {r_["payment_status"] for r_ in db("SELECT DISTINCT payment_status FROM bookings")} <= {"paid", "unpaid", None})
+
+    # ================= C. WALLET =================
+    c, r = P("payments.php", "get_methods"); check("C: production reports test mode/top-up off, OPay off", r == {"opay": False, "wallet_top_up": False, "test_mode": False}, r)
+    before = wallet("c1@test.local"); rows = db("SELECT COUNT(*) n FROM payments")[0]["n"]
+    for body in ({"amount": 5000}, {"amount": 5000, "method": "test"}, {"amount": 1, "idempotency_key": "abcdefgh1234"}, {"amount": -5}):
+        c, r = P("payments.php", "top_up_wallet", body, CT)
+        check("C: production top-up refused (%s)" % json.dumps(body), c == 503 and wallet("c1@test.local") == before and db("SELECT COUNT(*) n FROM payments")[0]["n"] == rows, (c, r))
+    c, r = P("payments.php", "top_up_wallet", {"amount": 5000}); check("C: anonymous top-up refused", c == 401, c)
+    db("UPDATE users SET wallet_balance=0 WHERE email='c2@test.local'")
+    c, r = D("payments.php", "top_up_wallet", {"amount": 5000, "idempotency_key": "key-0001-aaaa"}, C2T)
+    row = db("SELECT method,status,is_test,booking_kind,provider_reference p FROM payments WHERE provider_reference LIKE 'test_wallet_%' ORDER BY id DESC LIMIT 1")[0]
+    check("C: dev top-up credits once and writes a clearly labelled test payment row", r.get("success") and wallet("c2@test.local") == 5000 and row["method"] == "test" and row["is_test"] == 1 and row["booking_kind"] == "topup" and row["status"] == "success", (r, row))
+    c, r = D("payments.php", "top_up_wallet", {"amount": 5000, "idempotency_key": "key-0001-aaaa"}, C2T); check("C: same idempotency key credits only once", r.get("credited") is False and wallet("c2@test.local") == 5000, r)
+    res = parallel(6, lambda: D("payments.php", "top_up_wallet", {"amount": 700, "idempotency_key": "key-race-0002"}, C2T)[1])
+    check("C: concurrent same-key top-ups credit once (5000->5700)", wallet("c2@test.local") == 5700, wallet("c2@test.local"))
+    for amt in (0, -1, "abc", 1000001, None, "NaN", "1e999"):
+        c, r = D("payments.php", "top_up_wallet", {"amount": amt}, C2T); check("C: invalid/excessive amount %r rejected" % (amt,), "error" in r and wallet("c2@test.local") == 5700, (c, r))
+    c, r = D("payments.php", "top_up_wallet", {"amount": 10, "idempotency_key": "bad key!"}, C2T); check("C: malformed idempotency key rejected", c == 422, (c, r))
+    tot = db("SELECT COALESCE(SUM(amount),0) s FROM payments WHERE booking_kind='topup' AND provider_reference LIKE ?", ("test_wallet_%d_%%" % db("SELECT id FROM users WHERE email='c2@test.local'")[0]["id"],))[0]["s"]
+    check("C: wallet balance equals the sum of its recorded test credits", tot == wallet("c2@test.local") == 5700, (tot, wallet("c2@test.local")))
+    c, r = D("payments.php", "get_methods"); check("C: dev server exposes test mode", r.get("test_mode") is True and r.get("wallet_top_up") is True, r)
+
+    # ================= D. AUTHENTICATION / CONFIGURATION =================
+    uid = db("SELECT id FROM users WHERE email='c1@test.local'")[0]["id"]
+    c, r = P("bookings.php", "get_my_bookings", token="not.a.jwt"); check("D: garbage token treated as unauthenticated", c == 401, c)
+    c, r = P("bookings.php", "get_my_bookings", token=make_jwt(JWT, uid, "customer", -10)); check("D: expired token rejected", c == 401, c)
+    c, r = P("bookings.php", "get_my_bookings", token=make_jwt(JWT, uid, "customer")); check("D: validly signed token accepted", c == 200, c)
+    c, r = P("bookings.php", "get_my_bookings", token=make_jwt("bookkam_dev_secret_not_for_production", uid, "customer")); check("D: token signed with the old dev fallback secret rejected in production", c == 401, c)
+    tok = make_jwt(JWT, uid, "customer").split("."); forged = make_jwt(JWT, db("SELECT id FROM users WHERE role='admin'")[0]["id"], "admin").split(".")
+    c, r = P("admin.php", "get_customers", token=".".join([tok[0], forged[1], tok[2]])); check("D: payload swapped under another signature rejected", c == 401, c)
+    c, r = P("admin.php", "get_customers", token=make_jwt(JWT, uid, "admin")); check("D: role claim in the token is not trusted (DB role used)", c == 403, c)
+    c, r = P("auth.php", "verify_otp", {"phone": "2348000000000", "otp": "123456"}); check("D: fixed test OTP rejected in production", "error" in r and "token" not in r, r)
+    for name, env, expect in [("JWT_SECRET missing", {"APP_ENV": "production"}, 500), ("JWT_SECRET placeholder", {"APP_ENV": "production", "JWT_SECRET": "REPLACE_WITH_A_UNIQUE_RANDOM_SECRET_0123456789"}, 500),
+                              ("JWT_SECRET too short", {"APP_ENV": "production", "JWT_SECRET": "short"}, 500), ("APP_ENV unset (fail closed)", {"JWT_SECRET": ""}, 500),
+                              ("APP_ENV typo 'prod' (fail closed)", {"APP_ENV": "prod"}, 500), ("APP_ENV 'staging' (fail closed)", {"APP_ENV": "staging"}, 500)]:
+        p = start(18097, env); c, r = call("http://127.0.0.1:18097", "bookings.php", "get_my_bookings"); stop(p)
+        check("D: %s -> server refuses to run (HTTP %d)" % (name, expect), c == expect, (c, r))
+    p = start(18097, {"APP_ENV": "development"}); c, r = call("http://127.0.0.1:18097", "payments.php", "get_methods"); stop(p)
+    check("D: dev fallback secret only when APP_ENV=development is explicit", c == 200 and r.get("test_mode") is True, (c, r))
+    # database settings copied from the placeholder template must not be used
+    cfgdir = os.path.join(TMP, "dbcfg"); os.makedirs(os.path.join(cfgdir, "config"))
+    shutil.copy(os.path.join(ROOT, "api", "config", "db.php"), os.path.join(cfgdir, "config", "db.php"))
+    open(os.path.join(cfgdir, ".env"), "w").write("DB_HOST=127.0.0.1\nDB_USER=REPLACE_WITH_DATABASE_USER\nDB_PASS=REPLACE_WITH_DATABASE_PASSWORD\nDB_NAME=bookkam\n")
+    out = subprocess.run(["php", "-r", "require '%s/config/db.php'; echo 'CONNECTED';" % cfgdir], capture_output=True, text=True)
+    check("D: placeholder database settings are refused", "placeholders" in out.stdout and "CONNECTED" not in out.stdout, out.stdout[:120])
+    # admin portal key (index.php)
+    def portal(env, query):
+        p = start(18097, dict({"APP_ENV": "production", "JWT_SECRET": JWT}, **env))
+        try:
+            html = urllib.request.urlopen("http://127.0.0.1:18097/index.php" + query, timeout=10).read().decode()
+        finally: stop(p)
+        m = re.search(r"window\.ADMIN_PORTAL = (true|false)", html); return m.group(1) if m else html[:80]
+    LONG = "kq83-long-random-portal-key-for-tests-only"
+    check("D: portal closed when no key is configured, even for the old hard-coded key", portal({}, "?bkp=bk_adm_2026") == "false")
+    check("D: portal opens only with the configured key", portal({"ADMIN_PORTAL_KEY": LONG}, "?bkp=" + LONG) == "true")
+    check("D: wrong key does not open the portal", portal({"ADMIN_PORTAL_KEY": LONG}, "?bkp=wrong") == "false")
+    check("D: old hard-coded key does not open a configured portal", portal({"ADMIN_PORTAL_KEY": LONG}, "?bkp=bk_adm_2026") == "false")
+    check("D: placeholder portal key never opens the portal", portal({"ADMIN_PORTAL_KEY": "REPLACE_WITH_A_LONG_RANDOM_SECRET"}, "?bkp=REPLACE_WITH_A_LONG_RANDOM_SECRET") == "false")
+    check("D: short portal key never opens the portal", portal({"ADMIN_PORTAL_KEY": "abc"}, "?bkp=abc") == "false")
+    grep = subprocess.run(["grep", "-rIl", "bk_adm_2026", os.path.join(ROOT, "api"), os.path.join(ROOT, "tests"), os.path.join(ROOT, "docs")], capture_output=True, text=True).stdout.split()
+    grep = [g for g in grep if not g.endswith("run_tests.py")]
+    check("D: hard-coded portal key is absent from shipped files", not grep, grep)
+    env_ex = open(os.path.join(ROOT, "api", ".env.example")).read()
+    check("D: .env.example holds placeholders only (no real-looking secrets)", not re.search(r"(?m)^(JWT_SECRET|DB_PASS|OPAY_SECRET_KEY|ADMIN_PORTAL_KEY)=(?!REPLACE_WITH|$)", env_ex))
+    names = set(re.findall(r'env\("([A-Z0-9_]+)"', open(os.path.join(ROOT, "api", "config", "config.php")).read())) | set(re.findall(r'\$_ENV\["([A-Z_]+)"\]', open(os.path.join(ROOT, "api", "config", "db.php")).read())) | {"ADMIN_PORTAL_KEY"}
+    declared = set(re.findall(r"(?m)^#?\s*([A-Z][A-Z0-9_]+)=", env_ex))
+    check("D: every environment variable the app reads is documented in .env.example", names - {"APP_ENV"} <= declared | {"APP_ENV"}, sorted(names - declared))
+    check("D: .env is git-ignored", ".env" in open(os.path.join(ROOT, ".gitignore")).read())
+
+    # ================= E. FRONTEND / API =================
+    for ep, act in [("bookings.php", "nope"), ("payments.php", "nope"), ("admin.php", "nope"), ("cars.php", "nope"), ("auth.php", "nope")]:
+        c, r = P(ep, act, token=AT); check("E: %s unknown action -> JSON error" % ep, "error" in r and isinstance(r["error"], str), (c, r))
+    c, r = P("payments.php", "initiate", {"booking_id": 99999, "method": "cash"}, CT); check("E: unknown booking -> JSON error, no internals", "error" in r and "SQL" not in json.dumps(r) and "PDO" not in json.dumps(r), r)
+    out = subprocess.run(["node", os.path.join(ROOT, "tests", "functional", "esc.test.js"), os.path.join(ROOT, "api", "js", "utils.js")], capture_output=True, text=True)
+    check("E: esc() neutralises HTML/attribute/template payloads", "ESC_OK" in out.stdout, out.stdout + out.stderr)
+    fields = r"(?:name|car_name|customer_name|driver_name|short_name|place_name|pickup_address|dropoff_address|message_text|email|phone|customer_phone|driver_phone|city|state|make|model|plate_number|title|tagline|description|bio|bank_name|account_name|account_number|url|main_photo|photo_url|image_url|context)"
+    simple = re.compile(r"\$\{\s*([A-Za-z_][\w]*(?:\??\.[A-Za-z_]\w*)*(?:\s*\|\|\s*(?:\"[^\"]*\"|'[^']*'))?)\s*\}")
+    bad = []
+    for f in ("admin.js", "app.js", "auth.js", "customer.js", "driver.js", "maps.js"):
+        for i, line in enumerate(open(os.path.join(ROOT, "api", "js", f), encoding="utf8").read().split("\n"), 1):
+            for m in simple.finditer(line):
+                base = re.split(r"\s*\|\|", m.group(1))[0]
+                if re.fullmatch(fields, re.split(r"\??\.", base)[-1]): bad.append("%s:%d %s" % (f, i, m.group(0)))
+    check("E: no user-controlled text field is interpolated into HTML unescaped", not bad, bad[:5])
+    js = open(os.path.join(ROOT, "api", "js", "customer.js"), encoding="utf8").read()
+    check("E: 'Simulate Payment' button is gated on server-reported test mode", "methods.test_mode" in js and js.index("methods.test_mode") < js.index("Simulate Payment"))
+    check("E: payment return page asks the server, not the browser, for the result", "checkPaymentReturn" in js and "action=verify" in js)
+    check("E: bookings list shows payment status and a retry button", "Payment pending" in js and "Pay now" in js)
+    check("E: top-up sends an idempotency key and no client 'method'", "idempotency_key" in js and 'method:"test"' not in js)
+
+    for p in procs:
+        stop(p)
+    shutil.rmtree(TMP, ignore_errors=True)
+    f = [n for n, ok, _ in results if not ok]
+    print("\nSUMMARY: %d checks, %d pass, %d fail" % (len(results), len(results) - len(f), len(f)))
+    sys.exit(1 if f else 0)
+
+def _dup_rejected():
+    try:
+        db("INSERT INTO payments(booking_id,amount,deposit_amount,method,status,provider_reference) VALUES(1,1,0,'test','pending','DUP-1')")
+        db("INSERT INTO payments(booking_id,amount,deposit_amount,method,status,provider_reference) VALUES(2,1,0,'test','pending','DUP-1')")
+        return False
+    except sqlite3.IntegrityError:
+        return True
+
+if __name__ == "__main__":
+    try: main()
+    finally:
+        for p in procs:
+            try: stop(p)
+            except Exception: pass

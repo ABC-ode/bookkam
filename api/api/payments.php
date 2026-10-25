@@ -117,7 +117,7 @@ function assertPayable($booking, $bookingType) {
 // If the booking can no longer take the payment (cancelled / already paid) the money is
 // returned to the customer's wallet instead of being lost or double-applied.
 function confirmByReference($pdo, $ref, $paidKobo = null) {
-    $ps = $pdo->prepare("SELECT * FROM payments WHERE paystack_reference=?");
+    $ps = $pdo->prepare("SELECT * FROM payments WHERE provider_reference=?");
     $ps->execute([$ref]);
     $payment = $ps->fetch();
     if (!$payment) return "not_found";
@@ -132,7 +132,7 @@ function confirmByReference($pdo, $ref, $paidKobo = null) {
     $bookingType = $payment["booking_kind"] ?? "website";
     $pdo->beginTransaction();
     try {
-        $claim = $pdo->prepare("UPDATE payments SET status='success' WHERE paystack_reference=? AND status<>'success'");
+        $claim = $pdo->prepare("UPDATE payments SET status='success' WHERE provider_reference=? AND status<>'success'");
         $claim->execute([$ref]);
         if ($claim->rowCount() !== 1) { $pdo->rollBack(); return "ignored"; }
         $result = "confirmed";
@@ -239,7 +239,7 @@ switch ($action) {
                 $data = opayInitialize($ref, (int)round($totalCharge * 100), $email, "https://bookkam.com/?opay_return=1&booking_type=$bookingType");
                 $checkoutUrl = $data["data"]["cashierUrl"] ?? "";
                 if (($data["code"] ?? "") === "00000" && filter_var($checkoutUrl, FILTER_VALIDATE_URL)) {
-                    $pdo->prepare("INSERT INTO payments (booking_id,amount,deposit_amount,method,status,paystack_reference,booking_kind) VALUES (?,?,?,?,'pending',?,?)")
+                    $pdo->prepare("INSERT INTO payments (booking_id,amount,deposit_amount,method,status,provider_reference,booking_kind) VALUES (?,?,?,?,'pending',?,?)")
                         ->execute([$bookingId, $amount, $deposit, "opay", $ref, $bookingType]);
                     respond(["success" => true, "authorization_url" => $checkoutUrl, "reference" => $ref]);
                 }

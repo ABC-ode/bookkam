@@ -18,6 +18,8 @@ function opayInitialize($reference, $amountKobo, $email, $callbackUrl) {
     curl_setopt_array($curl, [
         CURLOPT_URL            => "https://api.opaycheckout.com/api/v1/international/cashier/create",
         CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_TIMEOUT        => 15,
         CURLOPT_POST           => true,
         CURLOPT_HTTPHEADER     => [
             "Authorization: Bearer " . OPAY_SECRET_KEY,
@@ -36,8 +38,16 @@ function opayInitialize($reference, $amountKobo, $email, $callbackUrl) {
     ]);
     $res = curl_exec($curl);
     $err = curl_error($curl);
+    $http = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
     curl_close($curl);
-    if ($err) return ["status" => false, "message" => $err];
+    if ($err) {
+        error_log("BOOKKAM OPay initialization transport failure: " . $err);
+        return ["status" => false, "message" => "Payment provider is temporarily unavailable"];
+    }
+    if ($http < 200 || $http >= 300) {
+        error_log("BOOKKAM OPay initialization returned HTTP " . $http);
+        return ["status" => false, "message" => "Payment provider is temporarily unavailable"];
+    }
     return json_decode($res, true) ?: ["status" => false, "message" => "Invalid Opay response"];
 }
 
@@ -56,7 +66,13 @@ function opayVerify($reference) {
         CURLOPT_POSTFIELDS => json_encode(["reference" => $reference, "country" => "NG"]),
     ]);
     $res = curl_exec($curl);
+    $err = curl_error($curl);
+    $http = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
     curl_close($curl);
+    if ($err || $http < 200 || $http >= 300) {
+        error_log("BOOKKAM OPay status check failed" . ($err ? ": " . $err : " (HTTP " . $http . ")"));
+        return ["status" => false];
+    }
     return json_decode($res, true) ?: ["status" => false];
 }
 
@@ -81,9 +97,9 @@ function loadBooking($pdo, $bookingType, $bookingId) {
 // cancelled booking or be applied twice.
 function settleBooking($pdo, $bookingType, $bookingId) {
     if ($bookingType === "event") {
-        $c = $pdo->prepare("SELECT COUNT(*) FROM payments WHERE booking_id=? AND booking_kind='event' AND status='success'");
-        $c->execute([$bookingId]);
-        if ((int)$c->fetchColumn() > 0) return false;
+        // The payment row is marked successful before this function is called.
+        // Counting successful payments here would therefore reject the very payment
+        // being settled. The conditional booking update is the idempotency guard.
         $u = $pdo->prepare("UPDATE event_bookings SET status='confirmed' WHERE id=? AND status='pending'");
         $u->execute([$bookingId]);
         return $u->rowCount() === 1;

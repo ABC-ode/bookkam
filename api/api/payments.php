@@ -166,7 +166,7 @@ switch ($action) {
     // ── Tells the frontend which methods are actually usable right now ─────
     case "get_methods": {
         respond([
-            "opay"     => OPAY_ENABLED && !empty(OPAY_SECRET_KEY),
+            "opay"     => OPAY_ENABLED && !empty(OPAY_SECRET_KEY) && !empty(OPAY_MERCHANT_ID),
         ]);
     }
 
@@ -237,10 +237,11 @@ switch ($action) {
                 if (!OPAY_ENABLED) respondError("Opay is not available yet — please choose another payment method");
                 $ref  = "BKM-OP-" . strtoupper($bookingType) . "-" . $bookingId . "-" . time() . bin2hex(random_bytes(3));
                 $data = opayInitialize($ref, (int)round($totalCharge * 100), $email, "https://bookkam.com/?opay_return=1&booking_type=$bookingType");
-                if (($data["code"] ?? "") === "00000") {
+                $checkoutUrl = $data["data"]["cashierUrl"] ?? "";
+                if (($data["code"] ?? "") === "00000" && filter_var($checkoutUrl, FILTER_VALIDATE_URL)) {
                     $pdo->prepare("INSERT INTO payments (booking_id,amount,deposit_amount,method,status,paystack_reference,booking_kind) VALUES (?,?,?,?,'pending',?,?)")
                         ->execute([$bookingId, $amount, $deposit, "opay", $ref, $bookingType]);
-                    respond(["success" => true, "authorization_url" => $data["data"]["cashierUrl"] ?? null, "reference" => $ref]);
+                    respond(["success" => true, "authorization_url" => $checkoutUrl, "reference" => $ref]);
                 }
                 respondError($data["message"] ?? "Opay payment initiation failed");
                 break;

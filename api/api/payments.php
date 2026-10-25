@@ -311,16 +311,37 @@ switch ($action) {
 
     case "top_up_wallet": {
         if (!$user) respondError("Unauthorised", 401);
-        $amount = (float)($input["amount"] ?? 0);
-        if ($amount <= 0) respondError("Invalid amount");
-        if (TEST_MODE) {
-            $pdo->prepare("UPDATE users SET wallet_balance=wallet_balance+? WHERE id=?")->execute([$amount, $user["id"]]);
-            $s = $pdo->prepare("SELECT wallet_balance FROM users WHERE id=?");
-            $s->execute([$user["id"]]);
-            $u = $s->fetch();
-            respond(["success" => true, "new_balance" => $u["wallet_balance"], "message" => "Wallet topped up"]);
+        $amount = filter_var($input["amount"] ?? null, FILTER_VALIDATE_FLOAT);
+        // Keep test credits bounded and prevent zero, negative, NaN, or absurd values.
+        if ($amount === false || !is_finite((float)$amount) || $amount <= 0 || $amount > 1000000) {
+            respondError("Amount must be greater than zero and no more than ₦1,000,000", 422);
         }
-        respondError("Use OPay for production top-up");
+        if (!TEST_MODE) {
+            // Do not credit real wallets until a verified provider-backed top-up flow exists.
+            respondError("Wallet top-ups are temporarily unavailable. Please contact support.", 503);
+        }
+
+        // Test-only credits are atomic and auditable; never expose this path in production.
+        $pdo->beginTransaction();
+        try {
+            $u = $pdo->prepare("UPDATE users SET wallet_balance=wallet_balance+? WHERE id=?");
+            $u->execute([(float)$amount, $user["id"]]);
+            if ($u->rowCount() !== 1) {
+                throw new RuntimeException("Wallet owner not found");
+            }
+            $p = $pdo->prepare("INSERT INTO payments (booking_id, booking_kind, amount, method, status, is_test, provider_reference)
+                VALUES (NULL, 'wallet_top_up', ?, 'test', 'success', 1, ?)");
+            $p->execute([(float)$amount, "test_wallet_" . bin2hex(random_bytes(12))]);
+            $pdo->commit();
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            error_log("BOOKKAM test wallet top-up failed: " . $e->getMessage());
+            respondError("Could not top up wallet", 500);
+        }
+        $s = $pdo->prepare("SELECT wallet_balance FROM users WHERE id=?");
+        $s->execute([$user["id"]]);
+        $u = $s->fetch();
+        respond(["success" => true, "new_balance" => $u["wallet_balance"], "message" => "Test wallet topped up"]);
     }
 
     case "get_wallet": {

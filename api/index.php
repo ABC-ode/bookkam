@@ -1484,7 +1484,7 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
           if (methods && methods.paystack) addPayButton('Pay with Card (Paystack)', 'paystack');
           if (methods && methods.opay) addPayButton('Pay with Opay', 'opay');
         })
-        .catch(function () { addPayButton('Pay with Card (Paystack)', 'paystack'); });
+        .catch(function () { /* Payment methods unavailable: do not expose disabled Paystack fallback. */ });
     }
 
     // expose opener for the trigger buttons below

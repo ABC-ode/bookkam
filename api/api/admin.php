@@ -6,7 +6,13 @@ apiHeaders();
 $input  = json_decode(file_get_contents("php://input"), true) ?? [];
 $action = $_GET["action"] ?? $input["action"] ?? "";
 $user   = getAuthUser($pdo);
-if ($user && $user["role"] !== "admin") respondError("Admin access required", 403);
+// Default-deny: every action requires a logged-in admin unless it is listed here.
+// Only add an action to this list after confirming its response is safe for anonymous visitors.
+$publicActions = ["get_cities"];
+if (!in_array($action, $publicActions, true)) {
+    if (!$user) respondError("Unauthorised", 401);
+    if ($user["role"] !== "admin") respondError("Admin access required", 403);
+}
 
 switch ($action) {
 
@@ -264,7 +270,10 @@ switch ($action) {
     }
 
     case "get_cities": {
-        respond(["cities"=>$pdo->query("SELECT * FROM cities ORDER BY name")->fetchAll()]);
+        // Public action (city selector). Anonymous and customer callers get active cities only, safe columns only.
+        $isAdmin = $user && $user["role"] === "admin";
+        $sql = "SELECT id,name,state,is_active FROM cities" . ($isAdmin ? "" : " WHERE is_active=1") . " ORDER BY name";
+        respond(["cities"=>$pdo->query($sql)->fetchAll()]);
     }
 
     case "add_city": {

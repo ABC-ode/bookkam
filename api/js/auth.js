@@ -593,8 +593,8 @@ function renderUnderReview(status) {
   document.getElementById("under-review-content").innerHTML = `
   <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:32px">
     <div style="text-align:center;max-width:340px">
-      <span class="material-icons-outlined" style="font-size:80px;color:${s.color};display:block;margin-bottom:20px">${s.icon}</span>
-      <h2 style="font-family:'Cormorant Garamond',serif;font-size:32px;font-weight:300;color:var(--text);margin-bottom:12px">${s.title}</h2>
+      <span class="material-icons-outlined" style="font-size:80px;color:${esc(s.color)};display:block;margin-bottom:20px">${s.icon}</span>
+      <h2 style="font-family:'Cormorant Garamond',serif;font-size:32px;font-weight:300;color:var(--text);margin-bottom:12px">${esc(s.title)}</h2>
       <p style="color:var(--muted);line-height:1.6;margin-bottom:32px">${s.msg}</p>
       <a href="https://wa.me/${typeof BOOKKAM_SUPPORT !== "undefined" ? BOOKKAM_SUPPORT : "2340000000000"}" target="_blank" class="btn btn-gold btn-full">
         <span class="material-icons-outlined">support_agent</span> Contact Support

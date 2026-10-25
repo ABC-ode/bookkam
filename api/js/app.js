@@ -152,7 +152,7 @@ function shimmerCards(n) {
 
 function setMobileNav(role, name) {
   document.querySelectorAll(`#${role}-mobile-nav .mobile-nav-item`).forEach(i => i.classList.remove("active"));
-  const el = document.getElementById(`mnav-${name}`);
+  const el = document.getElementById(`mnav-${esc(name)}`);
   if (el) el.classList.add("active");
 }
 
@@ -212,7 +212,7 @@ async function openNotifications() {
     <div class="notif-item ${n.is_read?"read":"unread"}">
       <div class="notif-icon"><span class="material-icons-outlined">${n.type==="booking"?"directions_car":n.type==="flag"?"warning":"notifications"}</span></div>
       <div class="notif-body">
-        <div class="notif-title">${n.title}</div>
+        <div class="notif-title">${esc(n.title)}</div>
         <div class="notif-msg">${n.body}</div>
         <div class="notif-time">${fmtDate(n.created_at)}</div>
       </div>

@@ -34,7 +34,7 @@ function renderCustomerSidebar() {
 function renderCustomerTopbar() {
   document.getElementById("customer-topbar").innerHTML = `
   <div class="topbar-greeting">
-    ${greet()}, <span>${currentUser.name ? currentUser.name.split(" ")[0] : "Guest"}</span>
+    ${greet()}, <span>${esc(currentUser.name ? currentUser.name.split(" ")[0] : "Guest")}</span>
   </div>
   <div class="topbar-actions">
     <div class="topbar-notif" onclick="toggleNotifications(event)">
@@ -173,7 +173,7 @@ async function checkActiveBooking() {
         <span class="pulse-dot"></span>
         <div>
           <div style="font-weight:700;color:var(--cyan);font-size:14px">Active Trip</div>
-          <div style="font-size:12px;color:var(--muted)">${b.car_name} · ${b.car_type==="self_drive"?"Self Drive":"With Driver"}</div>
+          <div style="font-size:12px;color:var(--muted)">${esc(b.car_name)} · ${b.car_type==="self_drive"?"Self Drive":"With Driver"}</div>
         </div>
       </div>
       <button class="btn btn-sm" style="background:var(--cyan);color:#020B18;font-weight:700" onclick="customerTab('tracking')">
@@ -189,9 +189,9 @@ function bookingCardHTML(b) {
   <div class="card card-hover" style="margin-bottom:12px">
     <div class="flex-between">
       <div>
-        <div style="font-weight:700;font-size:15px;margin-bottom:3px">${b.car_name}</div>
+        <div style="font-weight:700;font-size:15px;margin-bottom:3px">${esc(b.car_name)}</div>
         <div style="font-size:12px;color:var(--muted)">${isRide?"🚗 Ride":"🔑 Rental"} · ${capitalize(b.booking_type)} · ${fmtDate(b.created_at)}</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:3px">${b.pickup_address||"—"}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:3px">${esc(b.pickup_address||"—")}</div>
       </div>
       <div style="text-align:right">
         <span class="badge ${statusColor(b.status)}">${capitalize(b.status)}</span>
@@ -241,7 +241,7 @@ function selfDriveCardHTML(c) {
   return `
   <div class="car-card ${!available?"car-unavailable":""}" onclick="${available?`openSelfDriveModal(${c.id})`:""}">
     <div class="car-card-img" style="position:relative">
-      ${c.main_photo ? `<img src="${c.main_photo}" alt="${c.name}" loading="lazy">` : `<div class="car-img-placeholder"><span class="material-icons-outlined">directions_car</span></div>`}
+      ${c.main_photo ? `<img src="${esc(c.main_photo)}" alt="${esc(c.name)}" loading="lazy">` : `<div class="car-img-placeholder"><span class="material-icons-outlined">directions_car</span></div>`}
       <div class="availability-badge ${available?"badge-available":"badge-in-use"}">
         <span class="material-icons-outlined" style="font-size:10px">${available?"check_circle":"radio_button_checked"}</span>
         ${available?"Available":"In Use"}
@@ -252,7 +252,7 @@ function selfDriveCardHTML(c) {
       </button>
     </div>
     <div class="car-card-body">
-      <div class="car-card-name">${c.name}</div>
+      <div class="car-card-name">${esc(c.name)}</div>
       <div class="car-specs-mini">
         ${c.year ? `<span>${c.year}</span>` : ""}
         ${c.transmission ? `<span>${capitalize(c.transmission)}</span>` : ""}
@@ -275,22 +275,22 @@ async function openSelfDriveModal(carId) {
 
   showModal(`
   <div class="modal-header">
-    <h3>${c.name}</h3>
+    <h3>${esc(c.name)}</h3>
     <button class="modal-close" onclick="closeModal()"><span class="material-icons-outlined">close</span></button>
   </div>
   <div class="modal-body">
-    ${c.media && c.media.length ? `<div class="modal-car-photos">${c.media.map((m,i)=>`<img src="${m.url}" class="modal-car-photo" onclick="openLightbox(${JSON.stringify(c.media.map(x=>x.url))},${i})">`).join("")}</div>` : ""}
+    ${c.media && c.media.length ? `<div class="modal-car-photos">${c.media.map((m,i)=>`<img src="${esc(m.url)}" class="modal-car-photo" onclick="openLightbox(${esc(JSON.stringify(c.media.map(x=>x.url)))},${i})">`).join("")}</div>` : ""}
     
     <div class="specs-grid">
       <div class="spec-item"><span class="material-icons-outlined">calendar_today</span><div><div class="spec-label">Year</div><div class="spec-val">${c.year||"—"}</div></div></div>
-      <div class="spec-item"><span class="material-icons-outlined">palette</span><div><div class="spec-label">Color</div><div class="spec-val">${c.color||"—"}</div></div></div>
+      <div class="spec-item"><span class="material-icons-outlined">palette</span><div><div class="spec-label">Color</div><div class="spec-val">${esc(c.color||"—")}</div></div></div>
       <div class="spec-item"><span class="material-icons-outlined">settings</span><div><div class="spec-label">Transmission</div><div class="spec-val">${capitalize(c.transmission)||"—"}</div></div></div>
       <div class="spec-item"><span class="material-icons-outlined">local_gas_station</span><div><div class="spec-label">Fuel</div><div class="spec-val">${capitalize(c.fuel_type)||"—"}</div></div></div>
       <div class="spec-item"><span class="material-icons-outlined">event_seat</span><div><div class="spec-label">Seats</div><div class="spec-val">${c.seats||"—"}</div></div></div>
       <div class="spec-item"><span class="material-icons-outlined">speed</span><div><div class="spec-label">Daily Limit</div><div class="spec-val">${c.mileage_limit_per_day?c.mileage_limit_per_day+"km":"Unlimited"}</div></div></div>
     </div>
 
-    ${c.description ? `<div style="font-size:13px;color:var(--muted);margin-bottom:16px;line-height:1.6">${c.description}</div>` : ""}
+    ${c.description ? `<div style="font-size:13px;color:var(--muted);margin-bottom:16px;line-height:1.6">${esc(c.description)}</div>` : ""}
 
     ${c.security_deposit > 0 ? `
     <div style="background:rgba(201,125,58,0.1);border:1px solid rgba(201,125,58,0.2);border-radius:10px;padding:12px 16px;margin-bottom:16px">
@@ -320,7 +320,7 @@ async function openSelfDriveModal(carId) {
 
     <div id="rent-price-preview" style="text-align:center;margin:16px 0"></div>
 
-    <button class="btn btn-gold btn-full" onclick="createRentBooking(${carId},'${c.city}')">
+    <button class="btn btn-gold btn-full" onclick="createRentBooking(${carId},${esc(JSON.stringify(String(c.city??'')))})">
       <span class="material-icons-outlined">drive_eta</span> Rent This Car
     </button>
   </div>`);
@@ -397,7 +397,7 @@ function rideCardHTML(c) {
   return `
   <div class="car-card" onclick="openRideModal(${c.id})">
     <div class="car-card-img" style="position:relative">
-      ${c.main_photo ? `<img src="${c.main_photo}" alt="${c.name}" loading="lazy">` : `<div class="car-img-placeholder"><span class="material-icons-outlined">directions_car</span></div>`}
+      ${c.main_photo ? `<img src="${esc(c.main_photo)}" alt="${esc(c.name)}" loading="lazy">` : `<div class="car-img-placeholder"><span class="material-icons-outlined">directions_car</span></div>`}
       <div class="availability-badge badge-available">
         <span class="material-icons-outlined" style="font-size:10px">radio_button_checked</span> Online
       </div>
@@ -406,9 +406,9 @@ function rideCardHTML(c) {
       </button>
     </div>
     <div class="car-card-body">
-      <div class="car-card-name">${c.name}</div>
+      <div class="car-card-name">${esc(c.name)}</div>
       <div class="car-specs-mini">
-        ${c.make || c.model ? `<span>${c.make||""} ${c.model||""}</span>` : ""}
+        ${c.make || c.model ? `<span>${esc(c.make||"")} ${esc(c.model||"")}</span>` : ""}
         ${c.year ? `<span>${c.year}</span>` : ""}
       </div>
       <div style="display:flex;align-items:center;gap:4px;margin-top:6px">
@@ -416,7 +416,7 @@ function rideCardHTML(c) {
         <span style="font-size:12px;font-weight:600">${c.driver_rating||"5.0"}</span>
         <span style="font-size:11px;color:var(--muted)">(${c.total_trips||0} trips)</span>
       </div>
-      <div style="font-size:12px;color:var(--muted);margin-top:4px">by ${c.driver_name||"Driver"}</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px">by ${esc(c.driver_name||"Driver")}</div>
     </div>
   </div>`;
 }
@@ -430,14 +430,14 @@ async function openRideModal(carId) {
 
   showModal(`
   <div class="modal-header">
-    <h3>${c.name}</h3>
+    <h3>${esc(c.name)}</h3>
     <button class="modal-close" onclick="closeModal()"><span class="material-icons-outlined">close</span></button>
   </div>
   <div class="modal-body">
-    ${c.media && c.media.length ? `<div class="modal-car-photos">${c.media.map((m,i)=>`<img src="${m.url}" class="modal-car-photo" onclick="openLightbox([${c.media.map(x=>`'${x.url}'`).join(",")}],${i})">`).join("")}</div>` : ""}
+    ${c.media && c.media.length ? `<div class="modal-car-photos">${c.media.map((m,i)=>`<img src="${esc(m.url)}" class="modal-car-photo" onclick="openLightbox(${esc(JSON.stringify(c.media.map(x=>x.url)))},${i})">`).join("")}</div>` : ""}
 
     <div class="specs-grid">
-      <div class="spec-item"><span class="material-icons-outlined">directions_car</span><div><div class="spec-label">Make/Model</div><div class="spec-val">${c.make||""} ${c.model||""}</div></div></div>
+      <div class="spec-item"><span class="material-icons-outlined">directions_car</span><div><div class="spec-label">Make/Model</div><div class="spec-val">${esc(c.make||"")} ${esc(c.model||"")}</div></div></div>
       <div class="spec-item"><span class="material-icons-outlined">calendar_today</span><div><div class="spec-label">Year</div><div class="spec-val">${c.year||"—"}</div></div></div>
       <div class="spec-item"><span class="material-icons-outlined">star</span><div><div class="spec-label">Rating</div><div class="spec-val">${c.driver_rating||"5.0"} ⭐</div></div></div>
       <div class="spec-item"><span class="material-icons-outlined">event_seat</span><div><div class="spec-label">Trips Done</div><div class="spec-val">${c.total_trips||0}</div></div></div>
@@ -448,7 +448,7 @@ async function openRideModal(carId) {
         <span class="material-icons-outlined" style="color:var(--gold)">person</span>
       </div>
       <div>
-        <div style="font-weight:600">${c.driver_name||"Your Driver"}</div>
+        <div style="font-weight:600">${esc(c.driver_name||"Your Driver")}</div>
         <div style="font-size:12px;color:var(--muted)">Professional Chauffeur</div>
       </div>
     </div>
@@ -505,7 +505,7 @@ async function openRideModal(carId) {
       </div>
     </div>
 
-    <button class="btn btn-gold btn-full" id="ride-book-btn" onclick="createRideBooking(${carId},'${c.city}')">
+    <button class="btn btn-gold btn-full" id="ride-book-btn" onclick="createRideBooking(${carId},${esc(JSON.stringify(String(c.city??'')))})">
       <span class="material-icons-outlined">airport_shuttle</span> Book This Ride
     </button>
   </div>`);
@@ -537,7 +537,7 @@ async function openRideModal(carId) {
   }
 
   // Init live preview map
-  initRidePreviewMap('${c.city}');
+  initRidePreviewMap('${esc(c.city)}');
 
   // Address autocomplete — on select, update the map immediately
   initAddressAutocomplete("modal-pickup", "pickup-suggestions", () => updateRidePreviewMap());
@@ -609,7 +609,7 @@ async function createRideBooking(carId, city) {
 // ── PAYMENT MODAL ─────────────────────────────────────────────────────────────
 async function openPaymentModal(bookingId, total, bookingType) {
   bookingType = bookingType || "website";
-  let methods = { paystack: true, opay: false };
+  let methods = { opay: false };
   try {
     const m = await api("/payments.php?action=get_methods");
     if (!m.error) methods = m;
@@ -633,10 +633,7 @@ async function openPaymentModal(bookingId, total, bookingType) {
       <button class="btn btn-ghost btn-full" onclick="payBooking(${bookingId},'wallet','${bookingType}')">
         <span class="material-icons-outlined">account_balance_wallet</span> Pay from Wallet
       </button>` : ""}
-      <button class="btn btn-ghost btn-full" onclick="payBooking(${bookingId},'paystack','${bookingType}')">
-        <span class="material-icons-outlined">credit_card</span> Pay with Card (Paystack)
-      </button>
-      ${methods.opay ? `
+${methods.opay ? `
       <button class="btn btn-ghost btn-full" onclick="payBooking(${bookingId},'opay','${bookingType}')">
         <span class="material-icons-outlined">credit_card</span> Pay with Opay
       </button>` : ""}
@@ -688,12 +685,12 @@ async function toggleWishlist(carId, btn) {
 // ── GUEST GATE HELPER ─────────────────────────────────────────────────────────
 function guestGateHTML(icon, title, subtitle) {
   return `
-  <div class="page-header"><h2>${title.includes(" ") ? title.replace(/(\w+)(\s.+)/, '<span>$1</span>$2') : `<span>${title}</span>`}</h2></div>
+  <div class="page-header"><h2>${title.includes(" ") ? title.replace(/(\w+)(\s.+)/, '<span>$1</span>$2') : `<span>${esc(title)}</span>`}</h2></div>
   <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 32px;text-align:center">
     <div style="width:80px;height:80px;border-radius:50%;background:rgba(201,125,58,0.1);border:1px solid rgba(201,125,58,0.2);display:flex;align-items:center;justify-content:center;margin-bottom:24px">
       <span class="material-icons-outlined" style="font-size:36px;color:var(--gold)">${icon}</span>
     </div>
-    <h3 style="font-family:'Cormorant Garamond',serif;font-size:24px;font-weight:300;color:var(--text);margin-bottom:8px">${title}</h3>
+    <h3 style="font-family:'Cormorant Garamond',serif;font-size:24px;font-weight:300;color:var(--text);margin-bottom:8px">${esc(title)}</h3>
     <p style="color:var(--muted);font-size:14px;max-width:260px;line-height:1.6;margin-bottom:28px">${subtitle}</p>
     <button class="btn btn-gold" style="min-width:180px" onclick="showPage('page-auth');renderAuthLogin()">
       <span class="material-icons-outlined">login</span> Login to Access
@@ -735,9 +732,9 @@ async function loadBookingsByStatus(status) {
   <div class="card card-hover" style="margin-bottom:12px">
     <div class="flex-between">
       <div>
-        <div style="font-weight:700;font-size:15px;margin-bottom:3px">${b.car_name}</div>
+        <div style="font-weight:700;font-size:15px;margin-bottom:3px">${esc(b.car_name)}</div>
         <div style="font-size:12px;color:var(--muted)">${b.car_type==="self_drive"?"🔑 Rental":"🚗 Ride"} · ${capitalize(b.booking_type)} · ${fmtDate(b.created_at)}</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:3px">${b.pickup_address||"—"}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:3px">${esc(b.pickup_address||"—")}</div>
       </div>
       <div style="text-align:right">
         <span class="badge ${statusColor(b.status)}">${capitalize(b.status)}</span>
@@ -784,7 +781,7 @@ async function loadTracking() {
     <div class="page-header"><h2>Track <span>Trip</span></h2></div>
     <div style="padding:0 20px">
       <div class="card">
-        <div style="font-weight:700;margin-bottom:8px">${b.car_name}</div>
+        <div style="font-weight:700;margin-bottom:8px">${esc(b.car_name)}</div>
         <div style="font-size:13px;color:var(--muted)">Self-drive rental — pickup location shown below</div>
       </div>
       <div id="tracking-map" style="height:400px;border-radius:14px;margin-top:16px"></div>
@@ -802,11 +799,11 @@ async function loadTracking() {
       <div class="card" style="margin-bottom:16px">
         <div style="display:flex;align-items:center;justify-content:space-between">
           <div>
-            <div style="font-weight:700;margin-bottom:2px">${b.car_name}</div>
-            <div style="font-size:12px;color:var(--muted)">${b.driver_name||"Your Driver"}</div>
+            <div style="font-weight:700;margin-bottom:2px">${esc(b.car_name)}</div>
+            <div style="font-size:12px;color:var(--muted)">${esc(b.driver_name||"Your Driver")}</div>
           </div>
           <div style="display:flex;gap:10px;align-items:center">
-            ${b.driver_phone ? `<a href="tel:${b.driver_phone}" style="display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:50%;background:rgba(0,232,122,0.1);color:var(--green);text-decoration:none">
+            ${b.driver_phone ? `<a href="tel:${esc(b.driver_phone)}" style="display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:50%;background:rgba(0,232,122,0.1);color:var(--green);text-decoration:none">
               <span class="material-icons-outlined" style="font-size:20px">call</span>
             </a>` : ""}
             <button onclick="openChatModal(${b.id},${b.driver_user_id||b.driver_id})" style="display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:50%;background:rgba(201,125,58,0.1);color:var(--gold);border:none;cursor:pointer">
@@ -865,7 +862,7 @@ async function loadChatMessages() {
   el.innerHTML = msgs.map(m => {
     const isMe = m.sender_id === currentUser.id;
     return `<div class="chat-msg ${isMe?"chat-msg-me":"chat-msg-them"}">
-      <div class="chat-bubble ${m.is_flagged?"chat-flagged":""}">${m.message_text}</div>
+      <div class="chat-bubble ${m.is_flagged?"chat-flagged":""}">${esc(m.message_text)}</div>
       <div class="chat-time">${fmtTime(m.created_at)}</div>
     </div>`;
   }).join("");
@@ -920,8 +917,8 @@ async function loadCustomerMessages() {
   <div class="card card-hover" style="margin-bottom:12px" onclick="openChatModal(${b.id},${b.driver_user_id||b.driver_id})">
     <div class="flex-between">
       <div>
-        <div style="font-weight:700">${b.car_name}</div>
-        <div style="font-size:12px;color:var(--muted)">${b.driver_name||"Driver"} · ${fmtDate(b.created_at)}</div>
+        <div style="font-weight:700">${esc(b.car_name)}</div>
+        <div style="font-size:12px;color:var(--muted)">${esc(b.driver_name||"Driver")} · ${fmtDate(b.created_at)}</div>
       </div>
       <span class="material-icons-outlined" style="color:var(--muted)">chevron_right</span>
     </div>
@@ -986,8 +983,8 @@ async function showCitySelector() {
   <div class="modal-header"><h3>Select City</h3><button class="modal-close" onclick="closeModal()"><span class="material-icons-outlined">close</span></button></div>
   <div class="modal-body">
     ${cities.map(c => `
-    <div class="city-option ${c.name===customerCity?"city-option-active":""}" onclick="selectCity('${c.name}')">
-      <span class="material-icons-outlined">location_on</span>${c.name}, ${c.state}
+    <div class="city-option ${c.name===customerCity?"city-option-active":""}" onclick="selectCity(${esc(JSON.stringify(String(c.name??'')))})">
+      <span class="material-icons-outlined">location_on</span>${esc(c.name)}, ${esc(c.state)}
     </div>`).join("")}
   </div>`);
 }
@@ -996,7 +993,7 @@ function selectCity(name) {
   customerCity = name;
   closeModal();
   renderCustomerTopbar();
-  showToast(`City changed to ${name}`,"success");
+  showToast(`City changed to ${esc(name)}`,"success");
 }
 
 // ── PROFILE ───────────────────────────────────────────────────────────────────
@@ -1014,11 +1011,11 @@ function renderCustomerProfileView() {
       <div style="display:flex;align-items:center;gap:16px;margin-bottom:24px;padding-bottom:24px;border-bottom:1px solid var(--border-soft)">
         <div style="width:72px;height:72px;border-radius:50%;background:var(--card-dark);display:flex;align-items:center;justify-content:center;border:2px solid var(--border);flex-shrink:0;overflow:hidden">
           ${u.photo_url
-            ? `<img src="${u.photo_url}" style="width:100%;height:100%;object-fit:cover">`
+            ? `<img src="${esc(u.photo_url)}" style="width:100%;height:100%;object-fit:cover">`
             : `<span class="material-icons-outlined" style="font-size:32px;color:var(--gold)">person_outline</span>`}
         </div>
         <div>
-          <div style="font-family:'Cormorant Garamond',serif;font-size:24px;font-weight:300;color:var(--text)">${u.name||"No name set"}</div>
+          <div style="font-family:'Cormorant Garamond',serif;font-size:24px;font-weight:300;color:var(--text)">${esc(u.name||"No name set")}</div>
           ${isGoogle
             ? `<div style="display:inline-flex;align-items:center;gap:4px;background:rgba(66,133,244,0.12);border:1px solid rgba(66,133,244,0.25);border-radius:20px;padding:3px 10px;margin-top:4px">
                  <svg width="12" height="12" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
@@ -1031,7 +1028,7 @@ function renderCustomerProfileView() {
       <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:24px">
         <div style="padding:12px 16px;background:var(--card-dark);border-radius:10px">
           <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px">Full Name</div>
-          <div style="font-size:14px;font-weight:600">${u.name||"Not set"}</div>
+          <div style="font-size:14px;font-weight:600">${esc(u.name||"Not set")}</div>
         </div>
         ${displayPhone ? `
         <div style="padding:12px 16px;background:var(--card-dark);border-radius:10px">
@@ -1041,15 +1038,15 @@ function renderCustomerProfileView() {
         ${u.email ? `
         <div style="padding:12px 16px;background:var(--card-dark);border-radius:10px">
           <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px">Email</div>
-          <div style="font-size:14px;font-weight:600">${u.email}</div>
+          <div style="font-size:14px;font-weight:600">${esc(u.email)}</div>
         </div>` : ""}
         <div style="padding:12px 16px;background:var(--card-dark);border-radius:10px">
           <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px">City</div>
-          <div style="font-size:14px;font-weight:600">${u.city||"Not set"}</div>
+          <div style="font-size:14px;font-weight:600">${esc(u.city||"Not set")}</div>
         </div>
         <div style="padding:12px 16px;background:var(--card-dark);border-radius:10px">
           <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px">Referral Code</div>
-          <div style="font-size:14px;font-weight:600;font-family:'Space Mono',monospace">${u.referral_code||"—"}</div>
+          <div style="font-size:14px;font-weight:600;font-family:'Space Mono',monospace">${esc(u.referral_code||"—")}</div>
         </div>
       </div>
       <button class="btn btn-gold btn-full" onclick="renderCustomerProfileEdit()">
@@ -1074,10 +1071,10 @@ function renderCustomerProfileEdit() {
   <div class="page-header"><h2>Edit <span>Profile</span></h2></div>
   <div style="padding:0 20px">
     <div class="card" style="max-width:480px">
-      <div class="input-group"><label>Full Name</label><input class="input-field" id="profile-name" value="${u.name||""}" placeholder="Your full name"></div>
+      <div class="input-group"><label>Full Name</label><input class="input-field" id="profile-name" value="${esc(u.name||"")}" placeholder="Your full name"></div>
       <div class="input-group">
         <label>Email ${isGoogle?'<span style="font-size:10px;color:var(--muted);font-weight:400">(managed by Google)</span>':""}</label>
-        <input type="email" class="input-field" id="profile-email" value="${u.email||""}" placeholder="email@example.com" ${isGoogle?"readonly style='opacity:0.6;cursor:not-allowed'":""}>
+        <input type="email" class="input-field" id="profile-email" value="${esc(u.email||"")}" placeholder="email@example.com" ${isGoogle?"readonly style='opacity:0.6;cursor:not-allowed'":""}>
       </div>
       <div class="input-group"><label>City</label>
         <select class="input-field" id="profile-city">
@@ -1216,7 +1213,7 @@ async function updateRidePreviewMap() {
 
   const pinIcon = (iconName, color) => L.divIcon({
     className: "bk-marker",
-    html: `<span class="material-icons-outlined" style="font-size:26px;color:${color};filter:drop-shadow(0 2px 8px rgba(0,0,0,0.7))">${iconName}</span>`,
+    html: `<span class="material-icons-outlined" style="font-size:26px;color:${esc(color)};filter:drop-shadow(0 2px 8px rgba(0,0,0,0.7))">${iconName}</span>`,
     iconSize: [26, 26], iconAnchor: [13, 26], popupAnchor: [0, -26]
   });
 
@@ -1289,11 +1286,11 @@ function initAddressAutocomplete(inputId, suggestionsId, onSelect) {
       geocodeAddress(val, results => {
         if (!results.length) { sugg.style.display = "none"; return; }
         sugg.innerHTML = results.map((r, i) =>
-          `<div class="ac-item" data-idx="${i}" data-lat="${r.lat}" data-lng="${r.lng}" data-display="${r.place_name.replace(/"/g,"&quot;")}">
+          `<div class="ac-item" data-idx="${i}" data-lat="${r.lat}" data-lng="${r.lng}" data-display="${esc(r.place_name)}">
             <span class="material-icons-outlined" style="font-size:15px;color:var(--gold);flex-shrink:0">location_on</span>
             <span style="display:flex;flex-direction:column;gap:1px;min-width:0">
-              <span style="color:var(--text);font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.short_name}</span>
-              ${r.context ? `<span style="color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.context}</span>` : ""}
+              <span style="color:var(--text);font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.short_name)}</span>
+              ${r.context ? `<span style="color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.context)}</span>` : ""}
             </span>
           </div>`
         ).join("");

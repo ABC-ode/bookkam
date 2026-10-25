@@ -66,7 +66,7 @@ function renderDriverSidebar() {
 function renderDriverTopbar() {
   document.getElementById("driver-topbar").innerHTML = `
   <div class="topbar-greeting">
-    ${greet()}, <span>${currentUser.name ? currentUser.name.split(" ")[0] : "Driver"}</span>
+    ${greet()}, <span>${esc(currentUser.name ? currentUser.name.split(" ")[0] : "Driver")}</span>
   </div>
   <div class="topbar-actions">
     <div class="topbar-notif" onclick="toggleNotifications(event)">
@@ -190,10 +190,10 @@ async function checkDriverActiveTrip() {
       <div style="font-weight:700">${isInTrip ? "Trip In Progress" : "Confirmed Booking"}</div>
       <span style="font-size:11px;padding:2px 8px;border-radius:20px;background:${isInTrip ? "var(--gold)" : "var(--cyan)"};color:#020B18;font-weight:600">${isInTrip ? "IN TRIP" : "READY"}</span>
     </div>
-    <div style="font-size:13px;color:var(--muted);margin-bottom:4px">${active.customer_name}</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:4px">${esc(active.customer_name)}</div>
     <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
-      <span class="material-icons-outlined" style="font-size:12px;vertical-align:middle">my_location</span> ${active.pickup_address||"—"}
-      ${active.dropoff_address ? `<br><span class="material-icons-outlined" style="font-size:12px;vertical-align:middle">location_on</span> ${active.dropoff_address}` : ""}
+      <span class="material-icons-outlined" style="font-size:12px;vertical-align:middle">my_location</span> ${esc(active.pickup_address||"—")}
+      ${active.dropoff_address ? `<br><span class="material-icons-outlined" style="font-size:12px;vertical-align:middle">location_on</span> ${esc(active.dropoff_address)}` : ""}
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn btn-sm btn-ghost" onclick="driverTab('navigation')">
@@ -235,8 +235,8 @@ async function fetchPendingTrips() {
       <div style="font-weight:700;color:var(--gold)">New Trip Request!</div>
       <div id="trip-countdown" style="font-family:'Space Mono',monospace;font-size:18px;color:var(--cyan)">${secs}s</div>
     </div>
-    <div style="font-size:13px;margin-bottom:4px"><b>Customer:</b> ${pending.customer_name}</div>
-    <div style="font-size:13px;margin-bottom:4px"><b>Pickup:</b> ${pending.pickup_address||"—"}</div>
+    <div style="font-size:13px;margin-bottom:4px"><b>Customer:</b> ${esc(pending.customer_name)}</div>
+    <div style="font-size:13px;margin-bottom:4px"><b>Pickup:</b> ${esc(pending.pickup_address||"—")}</div>
     <div style="font-size:13px;margin-bottom:12px"><b>Total:</b> ${fmt(pending.total_price)}</div>
     <div style="display:flex;gap:10px">
       <button class="btn btn-green" style="flex:1" onclick="acceptTrip(${pending.id})"><span class="material-icons-outlined">check</span> Accept</button>
@@ -292,7 +292,7 @@ async function loadDriverNav() {
     return;
   }
   el.innerHTML = `
-  <div class="page-header"><h2>Navigation</h2><p>To: ${active.pickup_address||"Pickup"}</p></div>
+  <div class="page-header"><h2>Navigation</h2><p>To: ${esc(active.pickup_address||"Pickup")}</p></div>
   <div id="driver-nav-map" style="height:calc(100vh - 200px);border-radius:0"></div>`;
   setTimeout(() => initDriverNavMap("driver-nav-map", active), 100);
 }
@@ -347,20 +347,20 @@ async function loadMyCar() {
     const m  = mediaMap[label];
     const id = "slot-"+label.replace(/ /g,"-");
     if (m && m.status==="approved") {
-      return `<div class="photo-slot approved" id="${id}" data-label="${label}" data-status="approved" style="position:relative">
-        <img src="${m.url}" style="width:100%;height:100%;object-fit:cover;border-radius:8px">
+      return `<div class="photo-slot approved" id="${id}" data-label="${esc(label)}" data-status="approved" style="position:relative">
+        <img src="${esc(m.url)}" style="width:100%;height:100%;object-fit:cover;border-radius:8px">
         <div style="position:absolute;bottom:4px;left:4px;background:#00E87A;color:#000;font-size:10px;padding:2px 6px;border-radius:6px;font-weight:700">✓ Approved</div>
-        <div style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,0.7);color:#fff;font-size:10px;padding:2px 6px;border-radius:6px;cursor:pointer" onclick="replacePhoto('${id}','${label}')">Replace</div>
+        <div style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,0.7);color:#fff;font-size:10px;padding:2px 6px;border-radius:6px;cursor:pointer" onclick="replacePhoto(${esc(JSON.stringify(id))},${esc(JSON.stringify(label))})">Replace</div>
       </div>`;
     } else if (m && m.status==="pending") {
-      return `<div class="photo-slot" id="${id}" data-label="${label}" data-status="pending" style="position:relative">
-        <img src="${m.url}" style="width:100%;height:100%;object-fit:cover;border-radius:8px;opacity:0.6">
+      return `<div class="photo-slot" id="${id}" data-label="${esc(label)}" data-status="pending" style="position:relative">
+        <img src="${esc(m.url)}" style="width:100%;height:100%;object-fit:cover;border-radius:8px;opacity:0.6">
         <div style="position:absolute;bottom:4px;left:4px;background:#F5A623;color:#000;font-size:10px;padding:2px 6px;border-radius:6px">⏳ Pending</div>
       </div>`;
     } else {
-      return `<div class="photo-slot" id="${id}" data-label="${label}" data-status="empty">
+      return `<div class="photo-slot" id="${id}" data-label="${esc(label)}" data-status="empty">
         <div class="slot-icon"><span class="material-icons-outlined">photo_camera</span></div>
-        <div class="slot-label">${label}</div>
+        <div class="slot-label">${esc(label)}</div>
       </div>`;
     }
   }
@@ -369,12 +369,12 @@ async function loadMyCar() {
   <div class="card" style="margin-bottom:16px">
     <div class="section-label" style="margin-bottom:16px">Car Details</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      <div class="input-group"><label>Car Name</label><input class="input-field" id="car-name" value="${car.name||""}" placeholder="e.g. Toyota Camry 2021"></div>
-      <div class="input-group"><label>Make</label><input class="input-field" id="car-make" value="${car.make||""}" placeholder="e.g. Toyota"></div>
-      <div class="input-group"><label>Model</label><input class="input-field" id="car-model" value="${car.model||""}" placeholder="e.g. Camry"></div>
+      <div class="input-group"><label>Car Name</label><input class="input-field" id="car-name" value="${esc(car.name||"")}" placeholder="e.g. Toyota Camry 2021"></div>
+      <div class="input-group"><label>Make</label><input class="input-field" id="car-make" value="${esc(car.make||"")}" placeholder="e.g. Toyota"></div>
+      <div class="input-group"><label>Model</label><input class="input-field" id="car-model" value="${esc(car.model||"")}" placeholder="e.g. Camry"></div>
       <div class="input-group"><label>Year</label><input type="number" class="input-field" id="car-year" value="${car.year||new Date().getFullYear()}" min="2000" max="${new Date().getFullYear()+1}"></div>
-      <div class="input-group"><label>Color</label><input class="input-field" id="car-color" value="${car.color||""}" placeholder="e.g. Black"></div>
-      <div class="input-group"><label>Plate Number</label><input class="input-field" id="car-plate" value="${car.plate_number||""}" placeholder="e.g. ABC-123-XY"></div>
+      <div class="input-group"><label>Color</label><input class="input-field" id="car-color" value="${esc(car.color||"")}" placeholder="e.g. Black"></div>
+      <div class="input-group"><label>Plate Number</label><input class="input-field" id="car-plate" value="${esc(car.plate_number||"")}" placeholder="e.g. ABC-123-XY"></div>
       <div class="input-group"><label>Transmission</label>
         <select class="input-field" id="car-transmission">
           <option value="automatic" ${car.transmission==="automatic"?"selected":""}>Automatic</option>
@@ -463,7 +463,7 @@ async function loadMyCar() {
     const data = await res.json();
     if (data.error) { showToast(data.error,"error"); return; }
     activeSlot.outerHTML = `<div class="photo-slot" data-label="${activeLabel}" data-status="pending" style="position:relative">
-      <img src="${data.url}" style="width:100%;height:100%;object-fit:cover;border-radius:8px;opacity:0.6">
+      <img src="${esc(data.url)}" style="width:100%;height:100%;object-fit:cover;border-radius:8px;opacity:0.6">
       <div style="position:absolute;bottom:4px;left:4px;background:#F5A623;color:#000;font-size:10px;padding:2px 6px;border-radius:6px">⏳ Pending</div>
     </div>`;
     showToast("Photo uploaded! Pending admin approval","success");
@@ -524,8 +524,8 @@ async function loadDriverMessages() {
   <div class="card card-hover" style="margin-bottom:12px" onclick="openDriverChatModal(${b.id},${b.customer_id})">
     <div class="flex-between">
       <div>
-        <div style="font-weight:700">${b.customer_name}</div>
-        <div style="font-size:12px;color:var(--muted)">${b.car_name} · ${fmtDate(b.created_at)}</div>
+        <div style="font-weight:700">${esc(b.customer_name)}</div>
+        <div style="font-size:12px;color:var(--muted)">${esc(b.car_name)} · ${fmtDate(b.created_at)}</div>
       </div>
       <span class="material-icons-outlined" style="color:var(--muted)">chevron_right</span>
     </div>
@@ -573,7 +573,7 @@ async function loadDriverChatMessages() {
   el.innerHTML = msgs.map(m => {
     const isMe = m.sender_id === currentUser.id;
     return `<div class="chat-msg ${isMe?"chat-msg-me":"chat-msg-them"}">
-      <div class="chat-bubble ${m.is_flagged?"chat-flagged":""}">${m.message_text}</div>
+      <div class="chat-bubble ${m.is_flagged?"chat-flagged":""}">${esc(m.message_text)}</div>
       <div class="chat-time">${fmtTime(m.created_at)}</div>
     </div>`;
   }).join("");
@@ -613,22 +613,22 @@ function renderDriverProfileView() {
           <span class="material-icons-outlined" style="font-size:32px;color:var(--gold)">person_outline</span>
         </div>
         <div>
-          <div style="font-family:'Cormorant Garamond',serif;font-size:24px;font-weight:300">${u.name||"No name set"}</div>
-          <div style="color:var(--muted);font-size:13px;margin-top:4px">+234${u.phone||""}</div>
+          <div style="font-family:'Cormorant Garamond',serif;font-size:24px;font-weight:300">${esc(u.name||"No name set")}</div>
+          <div style="color:var(--muted);font-size:13px;margin-top:4px">+234${esc(u.phone||"")}</div>
         </div>
       </div>
       <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:24px">
         <div style="padding:12px 16px;background:var(--card-dark);border-radius:10px">
           <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px">Full Name</div>
-          <div style="font-size:14px;font-weight:600">${u.name||"Not set"}</div>
+          <div style="font-size:14px;font-weight:600">${esc(u.name||"Not set")}</div>
         </div>
         <div style="padding:12px 16px;background:var(--card-dark);border-radius:10px">
           <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px">Phone</div>
-          <div style="font-size:14px;font-weight:600">+234${u.phone||""}</div>
+          <div style="font-size:14px;font-weight:600">+234${esc(u.phone||"")}</div>
         </div>
         <div style="padding:12px 16px;background:var(--card-dark);border-radius:10px">
           <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px">City</div>
-          <div style="font-size:14px;font-weight:600">${u.city||"Not set"}</div>
+          <div style="font-size:14px;font-weight:600">${esc(u.city||"Not set")}</div>
         </div>
       </div>
       <button class="btn btn-gold btn-full" onclick="renderDriverProfileEdit()">
@@ -648,8 +648,8 @@ function renderDriverProfileEdit() {
   <div class="page-header"><h2>Edit <span>Profile</span></h2></div>
   <div style="padding:0 20px">
     <div class="card" style="max-width:480px">
-      <div class="input-group"><label>Full Name</label><input class="input-field" id="driver-name" value="${u.name||""}" placeholder="Your full name"></div>
-      <div class="input-group"><label>Email</label><input type="email" class="input-field" id="driver-email" value="${u.email||""}" placeholder="email@example.com"></div>
+      <div class="input-group"><label>Full Name</label><input class="input-field" id="driver-name" value="${esc(u.name||"")}" placeholder="Your full name"></div>
+      <div class="input-group"><label>Email</label><input type="email" class="input-field" id="driver-email" value="${esc(u.email||"")}" placeholder="email@example.com"></div>
       <div class="input-group"><label>City</label>
         <select class="input-field" id="driver-city">
           <option ${u.city==="Calabar"?"selected":""}>Calabar</option>

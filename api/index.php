@@ -1481,10 +1481,9 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
       fetch(PAYMENT_ENDPOINT + '?action=get_methods')
         .then(function (r) { return r.json(); })
         .then(function (methods) {
-          if (methods && methods.paystack) addPayButton('Pay with Card (Paystack)', 'paystack');
           if (methods && methods.opay) addPayButton('Pay with Opay', 'opay');
         })
-        .catch(function () { addPayButton('Pay with Card (Paystack)', 'paystack'); });
+        .catch(function () { /* Payment methods unavailable: do not expose disabled Paystack fallback. */ });
     }
 
     // expose opener for the trigger buttons below
@@ -1587,13 +1586,13 @@ $adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']
 <script src="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js" async defer></script>
-<script src="/js/utils.js?v=4"></script>
-<script src="/js/app.js?v=4"></script>
-<script src="/js/maps.js?v=4"></script>
-<script src="/js/auth.js?v=4"></script>
-<script src="/js/customer.js?v=4"></script>
-<script src="/js/driver.js?v=4"></script>
-<script src="/js/admin.js?v=6"></script>
+<script src="/js/utils.js?v=5"></script>
+<script src="/js/app.js?v=5"></script>
+<script src="/js/maps.js?v=5"></script>
+<script src="/js/auth.js?v=5"></script>
+<script src="/js/customer.js?v=5"></script>
+<script src="/js/driver.js?v=5"></script>
+<script src="/js/admin.js?v=7"></script>
 <script>
   // Register service worker for PWA
   if ('serviceWorker' in navigator) {

@@ -77,22 +77,89 @@ function loadBooking($pdo, $bookingType, $bookingId) {
     return $b;
 }
 
-function markConfirmed($pdo, $bookingType, $bookingId) {
-    $table = $bookingType === "event" ? "event_bookings" : "bookings";
-    $pdo->prepare("UPDATE $table SET status='confirmed' WHERE id=?")->execute([$bookingId]);
-    if ($bookingType !== "event") {
-        $pdo->prepare("UPDATE bookings SET payment_status='paid' WHERE id=?")->execute([$bookingId]);
+// Atomically move a booking to "confirmed/paid". Returns false (and changes nothing) if the
+// booking is cancelled, completed, or already paid — so a payment can never revive a
+// cancelled booking or be applied twice.
+function settleBooking($pdo, $bookingType, $bookingId) {
+    if ($bookingType === "event") {
+        $c = $pdo->prepare("SELECT COUNT(*) FROM payments WHERE booking_id=? AND booking_kind='event' AND status='success'");
+        $c->execute([$bookingId]);
+        if ((int)$c->fetchColumn() > 0) return false;
+        $u = $pdo->prepare("UPDATE event_bookings SET status='confirmed' WHERE id=? AND status='pending'");
+        $u->execute([$bookingId]);
+        return $u->rowCount() === 1;
+    }
+    $u = $pdo->prepare("UPDATE bookings SET status=CASE WHEN status='pending' THEN 'confirmed' ELSE status END, payment_status='paid'
+        WHERE id=? AND status IN ('pending','confirmed','active') AND (payment_status IS NULL OR payment_status<>'paid')");
+    $u->execute([$bookingId]);
+    return $u->rowCount() === 1;
+}
+
+function instantSuccess($pdo, $bookingType, $bookingId, $amount, $deposit, $method) {
+    $pdo->beginTransaction();
+    try {
+        if (!settleBooking($pdo, $bookingType, $bookingId)) { $pdo->rollBack(); respondError("This booking can no longer be paid"); }
+        $pdo->prepare("INSERT INTO payments (booking_id,amount,deposit_amount,method,status,is_test,booking_kind) VALUES (?,?,?,?,'success',1,?)")
+            ->execute([$bookingId, $amount, $deposit, $method, $bookingType]);
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        respondError("Payment could not be completed", 500);
     }
 }
 
-function confirmByReference($pdo, $ref) {
+function assertPayable($booking, $bookingType) {
+    if (in_array($booking["status"], ["cancelled", "completed"], true)) respondError("This booking can no longer be paid");
+    if ($bookingType !== "event" && ($booking["payment_status"] ?? "") === "paid") respondError("This booking is already paid");
+}
+
+// Called from the OPay webhook and from verify. Idempotent: a payment row is
+// claimed exactly once. $paidKobo (from the provider) must cover the amount we expect.
+// If the booking can no longer take the payment (cancelled / already paid) the money is
+// returned to the customer's wallet instead of being lost or double-applied.
+function confirmByReference($pdo, $ref, $paidKobo = null) {
     $ps = $pdo->prepare("SELECT * FROM payments WHERE paystack_reference=?");
     $ps->execute([$ref]);
     $payment = $ps->fetch();
-    if (!$payment || $payment["status"] === "success") return;
-    $pdo->prepare("UPDATE payments SET status='success' WHERE paystack_reference=?")->execute([$ref]);
+    if (!$payment) return "not_found";
+    if ($payment["status"] === "success") return "already_success";
+
+    $expectedKobo = (int)round(((float)$payment["amount"] + (float)$payment["deposit_amount"]) * 100);
+    if ($paidKobo !== null && (int)$paidKobo < $expectedKobo) {
+        error_log("BOOKKAM payment amount mismatch ref=$ref paid=$paidKobo expected=$expectedKobo");
+        return "amount_mismatch";
+    }
+
     $bookingType = $payment["booking_kind"] ?? "website";
-    markConfirmed($pdo, $bookingType, $payment["booking_id"]);
+    $pdo->beginTransaction();
+    try {
+        $claim = $pdo->prepare("UPDATE payments SET status='success' WHERE paystack_reference=? AND status<>'success'");
+        $claim->execute([$ref]);
+        if ($claim->rowCount() !== 1) { $pdo->rollBack(); return "ignored"; }
+        $result = "confirmed";
+        if (!settleBooking($pdo, $bookingType, $payment["booking_id"])) {
+            $result = "refunded";
+            if ($bookingType !== "event") {
+                $b = $pdo->prepare("SELECT customer_id FROM bookings WHERE id=?");
+                $b->execute([$payment["booking_id"]]);
+                $cid = $b->fetchColumn();
+                if ($cid) {
+                    $refund = (float)$payment["amount"] + (float)$payment["deposit_amount"];
+                    $pdo->prepare("UPDATE users SET wallet_balance=wallet_balance+? WHERE id=?")->execute([$refund, $cid]);
+                    $pdo->prepare("INSERT INTO notifications (user_id,title,body,type) VALUES (?,?,?,'payment')")
+                        ->execute([$cid, "Payment returned to wallet", "Your payment for booking #{$payment['booking_id']} arrived after the booking was cancelled or already paid, so it was credited to your BOOKKAM wallet.", ]);
+                }
+            } else {
+                error_log("BOOKKAM manual refund needed: event booking {$payment['booking_id']} ref=$ref");
+            }
+        }
+        $pdo->commit();
+        return $result;
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        error_log("BOOKKAM confirmByReference failed ref=$ref: " . $e->getMessage());
+        return "error";
+    }
 }
 
 switch ($action) {
@@ -100,8 +167,7 @@ switch ($action) {
     // ── Tells the frontend which methods are actually usable right now ─────
     case "get_methods": {
         respond([
-            "paystack" => !empty(PAYSTACK_SECRET) || TEST_MODE,
-            "opay"     => OPAY_ENABLED && !empty(OPAY_SECRET_KEY),
+            "opay"     => OPAY_ENABLED && !empty(OPAY_SECRET_KEY) && !empty(OPAY_MERCHANT_ID),
         ]);
     }
 
@@ -117,6 +183,8 @@ switch ($action) {
         if (!$booking) respondError("Booking not found");
         if ($bookingType === "website" && (int)$booking["customer_id"] !== (int)$user["id"]) respondError("Booking not found");
 
+        assertPayable($booking, $bookingType);
+
         $amount      = $booking["_amount"];
         $deposit     = $booking["_deposit"];
         $totalCharge = $amount + $deposit;
@@ -128,11 +196,22 @@ switch ($action) {
 
             case "wallet": {
                 if ($bookingType !== "website") respondError("Wallet payment is only available for website bookings");
-                if ($user["wallet_balance"] < $totalCharge) respondError("Insufficient wallet balance");
-                $pdo->prepare("UPDATE users SET wallet_balance=wallet_balance-? WHERE id=?")->execute([$totalCharge, $user["id"]]);
-                $pdo->prepare("INSERT INTO payments (booking_id,amount,deposit_amount,method,status,is_test,booking_kind) VALUES (?,?,?,?,'success',?,?)")
-                    ->execute([$bookingId, $amount, $deposit, "wallet", TEST_MODE ? 1 : 0, $bookingType]);
-                markConfirmed($pdo, $bookingType, $bookingId);
+                // One transaction: claim the booking, debit atomically, record the payment.
+                // Any failure rolls everything back, so the customer is never charged twice
+                // or charged for a booking that did not get confirmed.
+                $pdo->beginTransaction();
+                try {
+                    if (!settleBooking($pdo, $bookingType, $bookingId)) { $pdo->rollBack(); respondError("This booking can no longer be paid"); }
+                    $debit = $pdo->prepare("UPDATE users SET wallet_balance=wallet_balance-? WHERE id=? AND wallet_balance>=?");
+                    $debit->execute([$totalCharge, $user["id"], $totalCharge]);
+                    if ($debit->rowCount() !== 1) { $pdo->rollBack(); respondError("Insufficient wallet balance"); }
+                    $pdo->prepare("INSERT INTO payments (booking_id,amount,deposit_amount,method,status,is_test,booking_kind) VALUES (?,?,?,?,'success',?,?)")
+                        ->execute([$bookingId, $amount, $deposit, "wallet", TEST_MODE ? 1 : 0, $bookingType]);
+                    $pdo->commit();
+                } catch (Throwable $e) {
+                    if ($pdo->inTransaction()) $pdo->rollBack();
+                    respondError("Payment could not be completed", 500);
+                }
                 respond(["success" => true, "method" => "wallet", "status" => "confirmed", "message" => "Payment successful"]);
                 break;
             }
@@ -149,55 +228,21 @@ switch ($action) {
 
             case "test": {
                 if (!TEST_MODE) respondError("Test payments are only available in development");
-                $pdo->prepare("INSERT INTO payments (booking_id,amount,deposit_amount,method,status,is_test,booking_kind) VALUES (?,?,?,?,'success',1,?)")
-                    ->execute([$bookingId, $amount, $deposit, "test", $bookingType]);
-                markConfirmed($pdo, $bookingType, $bookingId);
+                instantSuccess($pdo, $bookingType, $bookingId, $amount, $deposit, "test");
                 respond(["success" => true, "method" => "test", "status" => "confirmed", "message" => "Test payment simulated"]);
                 break;
             }
 
-            case "paystack": {
-                if (empty(PAYSTACK_SECRET) && !TEST_MODE) respondError("Paystack is not configured");
-                if (TEST_MODE) {
-                    $pdo->prepare("INSERT INTO payments (booking_id,amount,deposit_amount,method,status,is_test,booking_kind) VALUES (?,?,?,?,'success',1,?)")
-                        ->execute([$bookingId, $amount, $deposit, "paystack", $bookingType]);
-                    markConfirmed($pdo, $bookingType, $bookingId);
-                    respond(["success" => true, "method" => "paystack", "status" => "confirmed", "message" => "Test Paystack payment simulated"]);
-                }
-                $ref  = "BKM-" . strtoupper($bookingType) . "-" . $bookingId . "-" . time();
-                $curl = curl_init();
-                curl_setopt_array($curl, [
-                    CURLOPT_URL            => "https://api.paystack.co/transaction/initialize",
-                    CURLOPT_RETURNTRANSFER => true,
-                    CURLOPT_POST           => true,
-                    CURLOPT_HTTPHEADER     => ["Authorization: Bearer " . PAYSTACK_SECRET, "Content-Type: application/json"],
-                    CURLOPT_POSTFIELDS     => json_encode([
-                        "email"        => $email,
-                        "amount"       => (int)round($totalCharge * 100),
-                        "reference"    => $ref,
-                        "callback_url" => "https://bookkam.com/?paystack_return=1&booking_type=$bookingType",
-                    ]),
-                ]);
-                $res  = curl_exec($curl);
-                $data = json_decode($res, true);
-                curl_close($curl);
-                if (!empty($data["status"])) {
-                    $pdo->prepare("INSERT INTO payments (booking_id,amount,deposit_amount,method,status,paystack_reference,booking_kind) VALUES (?,?,?,?,'pending',?,?)")
-                        ->execute([$bookingId, $amount, $deposit, "paystack", $ref, $bookingType]);
-                    respond(["success" => true, "authorization_url" => $data["data"]["authorization_url"], "reference" => $ref]);
-                }
-                respondError("Payment initiation failed");
-                break;
-            }
 
             case "opay": {
                 if (!OPAY_ENABLED) respondError("Opay is not available yet — please choose another payment method");
-                $ref  = "BKM-OP-" . strtoupper($bookingType) . "-" . $bookingId . "-" . time();
+                $ref  = "BKM-OP-" . strtoupper($bookingType) . "-" . $bookingId . "-" . time() . bin2hex(random_bytes(3));
                 $data = opayInitialize($ref, (int)round($totalCharge * 100), $email, "https://bookkam.com/?opay_return=1&booking_type=$bookingType");
-                if (($data["code"] ?? "") === "00000") {
+                $checkoutUrl = $data["data"]["cashierUrl"] ?? "";
+                if (($data["code"] ?? "") === "00000" && filter_var($checkoutUrl, FILTER_VALIDATE_URL)) {
                     $pdo->prepare("INSERT INTO payments (booking_id,amount,deposit_amount,method,status,paystack_reference,booking_kind) VALUES (?,?,?,?,'pending',?,?)")
                         ->execute([$bookingId, $amount, $deposit, "opay", $ref, $bookingType]);
-                    respond(["success" => true, "authorization_url" => $data["data"]["cashierUrl"] ?? null, "reference" => $ref]);
+                    respond(["success" => true, "authorization_url" => $checkoutUrl, "reference" => $ref]);
                 }
                 respondError($data["message"] ?? "Opay payment initiation failed");
                 break;
@@ -208,30 +253,19 @@ switch ($action) {
         break;
     }
 
-    // ── Paystack webhook ─────────────────────────────────────────────────────
-    case "webhook": {
-        $payload   = file_get_contents("php://input");
-        $signature = $_SERVER["HTTP_X_PAYSTACK_SIGNATURE"] ?? "";
-        if (!TEST_MODE && (!$signature || hash_hmac("sha512", $payload, PAYSTACK_SECRET) !== $signature)) {
-            http_response_code(401); exit;
-        }
-        $event = json_decode($payload, true);
-        if (($event["event"] ?? "") === "charge.success") {
-            confirmByReference($pdo, $event["data"]["reference"]);
-        }
-        http_response_code(200);
-        echo "OK";
-        exit;
-    }
-
-    // ── Opay webhook — structure only, inert unless OPAY_ENABLED ───────────
+    // ── Opay webhook — inert unless OPAY_ENABLED. The payload is never trusted:
+    // the status is re-checked with Opay's own status API before anything is confirmed.
     case "opay_webhook": {
         if (!OPAY_ENABLED) { http_response_code(200); echo "OK"; exit; }
         $payload = json_decode(file_get_contents("php://input"), true) ?? [];
         $ref     = $payload["reference"] ?? ($payload["payload"]["reference"] ?? "");
-        $status  = $payload["status"] ?? ($payload["payload"]["status"] ?? "");
-        if ($ref && $status === "SUCCESS") {
-            confirmByReference($pdo, $ref);
+        if ($ref && str_starts_with($ref, "BKM-OP-")) {
+            $data = opayVerify($ref);
+            if (($data["data"]["status"] ?? "") === "SUCCESS") {
+                $amt = $data["data"]["amount"]["total"] ?? null;
+                $r = confirmByReference($pdo, $ref, $amt !== null ? (int)$amt : 0);
+                if ($r === "error") { http_response_code(500); exit; }
+            }
         }
         http_response_code(200);
         echo "OK";
@@ -241,32 +275,23 @@ switch ($action) {
     case "verify": {
         $ref = $_GET["reference"] ?? $input["reference"] ?? "";
         if (!$ref) respondError("Reference required");
-        if (TEST_MODE) respond(["status" => "success", "message" => "Test payment verified"]);
-
         if (str_starts_with($ref, "BKM-OP-")) {
             if (!OPAY_ENABLED) respondError("Opay is not enabled");
             $data = opayVerify($ref);
             if (($data["data"]["status"] ?? "") === "SUCCESS") {
-                confirmByReference($pdo, $ref);
-                respond(["status" => "success"]);
+                $result = confirmByReference($pdo, $ref, (int)($data["data"]["amount"]["total"] ?? 0));
+                if (in_array($result, ["confirmed", "already_success"], true)) {
+                    respond(["status" => "success"]);
+                }
+                if ($result === "not_found") respondError("Payment reference not found", 404);
+                if ($result === "amount_mismatch") respondError("Payment amount does not match the booking", 409);
+                if ($result === "refunded") respondError("Payment was received but could not be applied to this booking", 409);
+                respondError("Payment could not be confirmed", 500);
             }
             respondError("Payment not verified");
         }
 
-        $curl = curl_init();
-        curl_setopt_array($curl, [
-            CURLOPT_URL            => "https://api.paystack.co/transaction/verify/$ref",
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_HTTPHEADER     => ["Authorization: Bearer " . PAYSTACK_SECRET],
-        ]);
-        $res  = curl_exec($curl);
-        $data = json_decode($res, true);
-        curl_close($curl);
-        if (($data["data"]["status"] ?? "") === "success") {
-            confirmByReference($pdo, $ref);
-            respond(["status" => "success"]);
-        }
-        respondError("Payment not verified");
+        respondError("Unknown payment reference");
     }
 
     case "top_up_wallet": {
@@ -280,7 +305,7 @@ switch ($action) {
             $u = $s->fetch();
             respond(["success" => true, "new_balance" => $u["wallet_balance"], "message" => "Wallet topped up"]);
         }
-        respondError("Use Paystack or Opay for production top-up");
+        respondError("Use OPay for production top-up");
     }
 
     case "get_wallet": {

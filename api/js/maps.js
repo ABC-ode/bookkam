@@ -53,7 +53,7 @@ function refreshMapTiles() {
 function makeMarkerEl(iconName, color) {
   const el = document.createElement("div");
   el.style.cssText = "display:flex;align-items:center;justify-content:center;filter:drop-shadow(0 2px 6px rgba(0,0,0,0.6))";
-  el.innerHTML = `<span class="material-icons-outlined" style="font-size:30px;color:${color}">${iconName}</span>`;
+  el.innerHTML = `<span class="material-icons-outlined" style="font-size:30px;color:${esc(color)}">${iconName}</span>`;
   return el;
 }
 
@@ -146,15 +146,15 @@ function initCustomerTrackingMap(containerId, booking) {
     const driverLL = [pickupLL[0]-0.005, pickupLL[1]-0.008];
     pickupMarker = new mapboxgl.Marker({ element: makeMarkerEl("my_location", "var(--cyan)") })
       .setLngLat(pickupLL)
-      .setPopup(new mapboxgl.Popup({ offset: 25 }).setHTML(`<b>Pickup</b><br>${booking?.pickup_address || ""}`))
+      .setPopup(new mapboxgl.Popup({ offset: 25 }).setHTML(`<b>Pickup</b><br>${esc(booking?.pickup_address || "")}`))
       .addTo(customerTrackingMap);
     destMarker = new mapboxgl.Marker({ element: makeMarkerEl("location_on", "var(--gold)") })
       .setLngLat(destLL)
-      .setPopup(new mapboxgl.Popup({ offset: 25 }).setHTML(`<b>Destination</b><br>${booking?.dropoff_address || ""}`))
+      .setPopup(new mapboxgl.Popup({ offset: 25 }).setHTML(`<b>Destination</b><br>${esc(booking?.dropoff_address || "")}`))
       .addTo(customerTrackingMap);
     driverMarker = new mapboxgl.Marker({ element: makeDriverMarkerEl() })
       .setLngLat(driverLL)
-      .setPopup(new mapboxgl.Popup({ offset: 25 }).setHTML(`<b>${booking?.driver_name || "Your Driver"}</b><br>On the way`))
+      .setPopup(new mapboxgl.Popup({ offset: 25 }).setHTML(`<b>${esc(booking?.driver_name || "Your Driver")}</b><br>On the way`))
       .addTo(customerTrackingMap);
     drawRoute(customerTrackingMap, driverLL, destLL);
   });
@@ -173,7 +173,7 @@ function initSelfDriveMap(containerId, booking) {
     const pickupLL = booking?.pickup_coords ? dbCoordsToMapbox(booking.pickup_coords) : center;
     new mapboxgl.Marker({ element: makeMarkerEl("my_location", "var(--cyan)") })
       .setLngLat(pickupLL)
-      .setPopup(new mapboxgl.Popup({ offset: 25 }).setHTML(`<b>Pickup</b><br>${booking?.pickup_address || ""}`).addTo(map))
+      .setPopup(new mapboxgl.Popup({ offset: 25 }).setHTML(`<b>Pickup</b><br>${esc(booking?.pickup_address || "")}`).addTo(map))
       .addTo(map);
   });
   return map;
@@ -211,11 +211,11 @@ function initDriverNavMap(containerId, activeBooking) {
     const destLL   = activeBooking.dropoff_coords ? dbCoordsToMapbox(activeBooking.dropoff_coords) : [center[0]+0.02, center[1]+0.02];
     new mapboxgl.Marker({ element: makeMarkerEl("my_location", "var(--cyan)") })
       .setLngLat(pickupLL)
-      .setPopup(new mapboxgl.Popup({ offset: 25 }).setHTML(`<b>Pickup</b><br>${activeBooking.pickup_address || ""}`).addTo(driverNavMap))
+      .setPopup(new mapboxgl.Popup({ offset: 25 }).setHTML(`<b>Pickup</b><br>${esc(activeBooking.pickup_address || "")}`).addTo(driverNavMap))
       .addTo(driverNavMap);
     new mapboxgl.Marker({ element: makeMarkerEl("location_on", "var(--gold)") })
       .setLngLat(destLL)
-      .setPopup(new mapboxgl.Popup({ offset: 25 }).setHTML(`<b>Destination</b><br>${activeBooking.dropoff_address || ""}`))
+      .setPopup(new mapboxgl.Popup({ offset: 25 }).setHTML(`<b>Destination</b><br>${esc(activeBooking.dropoff_address || "")}`))
       .addTo(driverNavMap);
     drawRoute(driverNavMap, pickupLL, destLL);
     if (navigator.geolocation) {
@@ -248,11 +248,11 @@ function initMapAddressInput(inputId, suggestionsId, onSelect) {
         if (!results.length) { suggestions.style.display = "none"; return; }
         suggestions.style.display = "block";
         suggestions.innerHTML = results.map((r, i) =>
-          `<div class="map-suggestion-item" data-idx="${i}" data-lat="${r.lat}" data-lng="${r.lng}" data-display="${r.place_name.replace(/"/g, "&quot;")}">
+          `<div class="map-suggestion-item" data-idx="${i}" data-lat="${r.lat}" data-lng="${r.lng}" data-display="${esc(r.place_name)}">
             <span class="material-icons-outlined" style="color:var(--gold);flex-shrink:0">location_on</span>
             <span style="display:flex;flex-direction:column;gap:1px;min-width:0">
-              <span style="color:var(--text);font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.short_name}</span>
-              ${r.context ? `<span style="color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.context}</span>` : ""}
+              <span style="color:var(--text);font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.short_name)}</span>
+              ${r.context ? `<span style="color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.context)}</span>` : ""}
             </span>
           </div>`
         ).join("");

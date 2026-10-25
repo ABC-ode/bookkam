@@ -625,9 +625,6 @@ function openPaymentModal(bookingId, total) {
       <button class="btn btn-ghost btn-full" onclick="payBooking(${bookingId},'wallet')">
         <span class="material-icons-outlined">account_balance_wallet</span> Pay from Wallet
       </button>
-      <button class="btn btn-ghost btn-full" onclick="payBooking(${bookingId},'card')">
-        <span class="material-icons-outlined">credit_card</span> Pay with Card (Paystack)
-      </button>
       <button class="btn btn-test btn-full" onclick="simulatePayment(${bookingId})">
         <span class="material-icons-outlined">science</span> Simulate Payment (Test Mode)
       </button>

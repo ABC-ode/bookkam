@@ -609,7 +609,7 @@ async function createRideBooking(carId, city) {
 // ── PAYMENT MODAL ─────────────────────────────────────────────────────────────
 async function openPaymentModal(bookingId, total, bookingType) {
   bookingType = bookingType || "website";
-  let methods = { paystack: false, opay: false };
+  let methods = { opay: false };
   try {
     const m = await api("/payments.php?action=get_methods");
     if (!m.error) methods = m;

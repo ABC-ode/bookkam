@@ -195,6 +195,7 @@ function bookingCardHTML(b) {
       </div>
       <div style="text-align:right">
         <span class="badge ${statusColor(b.status)}">${capitalize(b.status)}</span>
+        ${["pending","confirmed","active","completed"].includes(b.status)?`<div style="margin-top:4px"><span class="badge ${b.payment_status==="paid"?"badge-green":"badge-orange"}">${b.payment_status==="paid"?"Paid":"Payment pending"}</span></div>`:""}
         <div style="font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:300;color:var(--gold);margin-top:4px">${fmt(b.total_price)}</div>
       </div>
     </div>
@@ -637,9 +638,10 @@ ${methods.opay ? `
       <button class="btn btn-ghost btn-full" onclick="payBooking(${bookingId},'opay','${bookingType}')">
         <span class="material-icons-outlined">credit_card</span> Pay with Opay
       </button>` : ""}
+      ${methods.test_mode ? `
       <button class="btn btn-test btn-full" onclick="simulatePayment(${bookingId},'${bookingType}')">
         <span class="material-icons-outlined">science</span> Simulate Payment (Test Mode)
-      </button>
+      </button>` : ""}
     </div>
   </div>`);
 }
@@ -647,11 +649,31 @@ ${methods.opay ? `
 async function payBooking(bookingId, method, bookingType) {
   const data = await api("/payments.php?action=initiate","POST",{ booking_id:bookingId, method, booking_type: bookingType || "website" });
   if (data.error) { showToast(data.error,"error"); return; }
-  if (data.authorization_url) { window.location.href = data.authorization_url; return; }
+  if (data.authorization_url) {
+    // Remember the reference so the return page can ask the server (not the browser) for the result.
+    try { sessionStorage.setItem("bk_pending_ref", data.reference || ""); } catch (e) { /* storage may be blocked */ }
+    window.location.href = data.authorization_url;
+    return;
+  }
   closeModal();
   showToast(data.message||"Payment recorded!","success");
   loadMyBookings();
 }
+// Called when the provider sends the customer back (?opay_return=1). The browser's arrival is
+// NOT proof of payment: the server verifies with the provider and we only display its answer.
+async function checkPaymentReturn() {
+  let ref = "";
+  try { ref = sessionStorage.getItem("bk_pending_ref") || ""; sessionStorage.removeItem("bk_pending_ref"); } catch (e) { /* ignore */ }
+  try { history.replaceState(null, "", "/"); } catch (e) { /* ignore */ }
+  if (!ref) { showToast("We could not find your payment session. If you were charged, please contact support.", "error"); return; }
+  const data = await api("/payments.php?action=verify&reference=" + encodeURIComponent(ref));
+  if (data.status === "success") showToast("Payment confirmed. Thank you!", "success");
+  else if (data.status === "pending") showToast("Your payment is still processing. Check My Bookings in a moment.", "warning");
+  else if (data.status === "refunded") showToast(data.error || "Payment returned to your wallet", "warning");
+  else showToast(data.error || "Payment was not completed", "error");
+  if (typeof loadMyBookings === "function") loadMyBookings();
+}
+
 async function simulatePayment(bookingId, bookingType) { await payBooking(bookingId,"test", bookingType); }
 
 
@@ -738,12 +760,14 @@ async function loadBookingsByStatus(status) {
       </div>
       <div style="text-align:right">
         <span class="badge ${statusColor(b.status)}">${capitalize(b.status)}</span>
+        ${["pending","confirmed","active","completed"].includes(b.status)?`<div style="margin-top:4px"><span class="badge ${b.payment_status==="paid"?"badge-green":"badge-orange"}">${b.payment_status==="paid"?"Paid":"Payment pending"}</span></div>`:""}
         <div style="font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:300;color:var(--gold);margin-top:4px">${fmt(b.total_price)}</div>
       </div>
     </div>
     ${["pending","confirmed","active","completed"].includes(b.status)?`
     <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border-soft);display:flex;gap:8px">
       ${b.car_type==="chauffeur"?`<button class="btn btn-sm btn-ghost" onclick="openChatModal(${b.id},${b.driver_user_id||b.driver_id})"><span class="material-icons-outlined">chat</span> Chat</button>`:""}
+      ${["pending","confirmed","active"].includes(b.status) && b.payment_status!=="paid"?`<button class="btn btn-sm btn-gold" onclick="openPaymentModal(${b.id},${Number(b.total_price||0)+Number(b.security_deposit||0)},'website')">Pay now</button>`:""}
       ${["pending","confirmed"].includes(b.status)?`<button class="btn btn-sm btn-ghost-red" onclick="cancelBooking(${b.id})">Cancel</button>`:""}
     </div>`:""}
   </div>`).join("");
@@ -947,7 +971,7 @@ async function loadWallet() {
 async function topUpWallet() {
   const amount = parseFloat(document.getElementById("topup-amount").value);
   if (!amount || amount < 500) { showToast("Minimum top-up is ₦500","error"); return; }
-  const data = await api("/payments.php?action=top_up_wallet","POST",{ amount, method:"test" });
+  const data = await api("/payments.php?action=top_up_wallet","POST",{ amount, idempotency_key: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2) });
   if (data.error) { showToast(data.error,"error"); return; }
   showToast(`Wallet topped up with ${fmt(amount)}!`,"success");
   loadWallet();

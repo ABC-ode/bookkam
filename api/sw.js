@@ -1,4 +1,4 @@
-const CACHE_NAME = 'bookkam-v5';
+const CACHE_NAME = 'bookkam-v6';
 const OFFLINE_URL = '/offline.html';
 
 const ASSETS = [
@@ -7,13 +7,13 @@ const ASSETS = [
   '/css/style.css?v=4',
   '/css/material-icons-outlined.css',
   '/fonts/material-icons-outlined.woff2',
-  '/js/app.js?v=5',
-  '/js/auth.js?v=5',
-  '/js/customer.js?v=5',
-  '/js/driver.js?v=5',
-  '/js/admin.js?v=7',
-  '/js/maps.js?v=5',
-  '/js/utils.js?v=5',
+  '/js/app.js?v=6',
+  '/js/auth.js?v=6',
+  '/js/customer.js?v=6',
+  '/js/driver.js?v=6',
+  '/js/admin.js?v=8',
+  '/js/maps.js?v=6',
+  '/js/utils.js?v=6',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
   '/offline.html',

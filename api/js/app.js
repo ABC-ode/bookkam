@@ -234,6 +234,9 @@ document.addEventListener("click", e => {
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 window.addEventListener("DOMContentLoaded", () => {
+  if (new URLSearchParams(location.search).has("opay_return") && typeof checkPaymentReturn === "function") {
+    setTimeout(checkPaymentReturn, 800);
+  }
   // Sync orb icon with theme already applied by inline <head> script
   const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
   const themeIcon = document.getElementById('theme-icon');

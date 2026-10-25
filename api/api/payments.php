@@ -166,7 +166,6 @@ switch ($action) {
     // ── Tells the frontend which methods are actually usable right now ─────
     case "get_methods": {
         respond([
-            "paystack" => false,
             "opay"     => OPAY_ENABLED && !empty(OPAY_SECRET_KEY),
         ]);
     }
@@ -233,12 +232,6 @@ switch ($action) {
                 break;
             }
 
-            case "paystack": {
-                // Paystack is frozen for new payments. Keep webhook/verification
-                // handlers below for any historical or in-flight transactions.
-                respondError("Paystack is disabled. Please choose another payment method.", 410);
-                break;
-            }
 
             case "opay": {
                 if (!OPAY_ENABLED) respondError("Opay is not available yet — please choose another payment method");

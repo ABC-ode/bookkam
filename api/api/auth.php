@@ -249,8 +249,9 @@ switch ($action) {
         $name     = $payload["name"]    ?? null;
         $photo    = $payload["picture"] ?? null;
 
-        $s = $pdo->prepare("SELECT * FROM users WHERE google_id=? OR (email=? AND email IS NOT NULL) LIMIT 1");
-        $s->execute([$googleId, $email]);
+        $emailVerified = filter_var($payload["email_verified"] ?? false, FILTER_VALIDATE_BOOLEAN);
+        $s = $pdo->prepare("SELECT * FROM users WHERE google_id=? OR (email=? AND email IS NOT NULL AND ?=1) LIMIT 1");
+        $s->execute([$googleId, $email, $emailVerified ? 1 : 0]);
         $googleUser = $s->fetch();
 
         if ($googleUser) {
@@ -265,7 +266,8 @@ switch ($action) {
         }
 
         // New user — need city
-        if (!$city) respond(["needs_city" => true, "google_id" => $googleId, "email" => $email, "name" => $name, "photo" => $photo, "role" => $role]);
+        if (!$city) respond(["needs_city" => true, "email" => $email, "name" => $name, "photo" => $photo, "role" => $role,
+            "pending_token" => generateSocialPendingToken("google", $googleId, $email, $name, $photo, $role)]);
 
         $newUser = createUser($pdo, null, $email, $role, $name, $city, null, $googleId);
         if ($photo) {
@@ -277,6 +279,10 @@ switch ($action) {
 
     // ── Apple login ───────────────────────────────────────────────────────────
     case "apple_login": {
+        // The Apple identity token's signature is NOT verified here (no JWKS check), so anyone could
+        // forge a token and take over any account that shares an e-mail. Disabled outside development
+        // until real verification (Apple JWKS, issuer, audience, expiry) is implemented and tested.
+        if (!TEST_MODE) respondError("Sign in with Apple is temporarily unavailable. Please use another sign-in method.", 503);
         $idToken    = $input["id_token"]   ?? "";
         $role       = $input["role"]       ?? "customer";
         $city       = trim($input["city"]  ?? "");
@@ -307,7 +313,8 @@ switch ($action) {
             respond(buildUserResponse($pdo, $appleUser, $rememberMe));
         }
 
-        if (!$city) respond(["needs_city" => true, "apple_id" => $appleId, "email" => $email, "name" => $appleName, "role" => $role]);
+        if (!$city) respond(["needs_city" => true, "email" => $email, "name" => $appleName, "role" => $role,
+            "pending_token" => generateSocialPendingToken("apple", $appleId, $email, $appleName, null, $role)]);
 
         $newUser = createUser($pdo, null, $email, $role, $appleName ?: null, $city, null, null, $appleId);
         respond(buildUserResponse($pdo, $newUser, $rememberMe));
@@ -315,45 +322,37 @@ switch ($action) {
 
     // ── Set city after Google/Apple first login ────────────────────────────────
     case "set_city": {
-        $city       = trim($input["city"]     ?? "");
-        $googleId   = $input["google_id"]     ?? null;
-        $appleId    = $input["apple_id"]      ?? null;
-        $role       = $input["role"]          ?? "customer";
-        $email      = trim($input["email"]    ?? "");
-        $name       = trim($input["name"]     ?? "");
-        $photo      = $input["photo"]         ?? null;
+        // Only a server-issued pending token (from a verified google_login/apple_login) may create
+        // an account here. Provider id, e-mail, name, photo and role all come from that token;
+        // anything the browser sends besides the city is ignored. Admin can never be created here.
+        $city       = trim((string)($input["city"] ?? ""));
         $rememberMe = !empty($input["remember_me"]);
-
-        if (!$city) respondError("City required");
-
-        if ($googleId) {
-            $s = $pdo->prepare("SELECT * FROM users WHERE google_id=?");
-            $s->execute([$googleId]);
-            $existing = $s->fetch();
-            if ($existing) {
-                $pdo->prepare("UPDATE users SET city=? WHERE id=?")->execute([$city, $existing["id"]]);
-                $existing["city"] = $city;
-                respond(buildUserResponse($pdo, $existing, $rememberMe));
-            }
-            $newUser = createUser($pdo, null, $email ?: null, $role, $name ?: null, $city, null, $googleId);
-            if ($photo) $pdo->prepare("UPDATE users SET photo_url=? WHERE id=?")->execute([$photo, $newUser["id"]]);
-            respond(buildUserResponse($pdo, $newUser, $rememberMe));
+        if ($city === "" || mb_strlen($city) > 60) respondError("City required");
+        $tok = verifyJWT((string)($input["pending_token"] ?? ""));
+        if (!$tok || ($tok["typ"] ?? "") !== "social_pending" || !in_array($tok["provider"] ?? "", ["google", "apple"], true)
+            || !in_array($tok["role"] ?? "", ["customer", "driver"], true) || ($tok["sub"] ?? "") === "") {
+            respondError("Sign-in session expired. Please sign in again.", 401);
         }
-
-        if ($appleId) {
-            $s = $pdo->prepare("SELECT * FROM users WHERE apple_id=?");
-            $s->execute([$appleId]);
-            $existing = $s->fetch();
-            if ($existing) {
-                $pdo->prepare("UPDATE users SET city=? WHERE id=?")->execute([$city, $existing["id"]]);
-                $existing["city"] = $city;
-                respond(buildUserResponse($pdo, $existing, $rememberMe));
-            }
-            $newUser = createUser($pdo, null, $email ?: null, $role, $name ?: null, $city, null, null, $appleId);
-            respond(buildUserResponse($pdo, $newUser, $rememberMe));
+        $col = $tok["provider"] === "google" ? "google_id" : "apple_id";
+        $s = $pdo->prepare("SELECT * FROM users WHERE $col=?");
+        $s->execute([$tok["sub"]]);
+        $existing = $s->fetch();
+        if ($existing) {
+            if (!empty($existing["is_blacklisted"])) respondError("Your account has been suspended. Contact support.");
+            $pdo->prepare("UPDATE users SET city=? WHERE id=?")->execute([$city, $existing["id"]]);
+            $existing["city"] = $city;
+            respond(buildUserResponse($pdo, $existing, $rememberMe));
         }
-
-        respondError("Missing provider ID");
+        try {
+            $newUser = $tok["provider"] === "google"
+                ? createUser($pdo, null, $tok["email"] ?: null, $tok["role"], $tok["name"] ?: null, $city, null, $tok["sub"])
+                : createUser($pdo, null, $tok["email"] ?: null, $tok["role"], $tok["name"] ?: null, $city, null, null, $tok["sub"]);
+        } catch (Throwable $e) {
+            error_log("BOOKKAM set_city create failed: " . $e->getMessage());
+            respondError("Could not create account", 409);
+        }
+        if (!empty($tok["photo"])) $pdo->prepare("UPDATE users SET photo_url=? WHERE id=?")->execute([$tok["photo"], $newUser["id"]]);
+        respond(buildUserResponse($pdo, $newUser, $rememberMe));
     }
 
     // ── Get driver status ─────────────────────────────────────────────────────

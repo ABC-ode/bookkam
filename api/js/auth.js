@@ -513,8 +513,7 @@ async function submitCityPicker() {
     remember_me: true,
   };
 
-  if (pendingSocial.type === "google") payload.google_id = pendingSocial.google_id;
-  if (pendingSocial.type === "apple")  payload.apple_id  = pendingSocial.apple_id;
+  payload.pending_token = pendingSocial.pending_token;
 
   const data = await api("/auth.php?action=set_city", "POST", payload);
   if (data.error) { showToast(data.error, "error"); return; }

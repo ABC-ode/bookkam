@@ -128,12 +128,26 @@ function verifyJWT($token) {
     return $data;
 }
 
+// Short-lived token proving that a Google/Apple identity was verified server-side and only the
+// city is still missing. set_city accepts nothing else, so the browser cannot choose the
+// provider id, e-mail or role. It has no user_id and is never accepted as a login token.
+function generateSocialPendingToken($provider, $sub, $email, $name, $photo, $role) {
+    $h = base64_encode(json_encode(["alg" => "HS256", "typ" => "JWT"]));
+    $p = base64_encode(json_encode([
+        "typ" => "social_pending", "provider" => $provider, "sub" => (string)$sub,
+        "email" => $email, "name" => $name, "photo" => $photo, "role" => $role,
+        "exp" => time() + 900, "iat" => time(),
+    ]));
+    $s = rtrim(strtr(base64_encode(hash_hmac("sha256", "$h.$p", JWT_SECRET, true)), '+/', '-_'), '=');
+    return "$h.$p.$s";
+}
+
 function getAuthUser($pdo) {
     $headers = function_exists('getallheaders') ? getallheaders() : [];
     $auth    = $headers["Authorization"] ?? $headers["authorization"] ?? "";
     if (!str_starts_with($auth, "Bearer ")) return null;
     $payload = verifyJWT(substr($auth, 7));
-    if (!$payload) return null;
+    if (!$payload || !isset($payload["user_id"]) || isset($payload["typ"])) return null;
     $s = $pdo->prepare("SELECT * FROM users WHERE id=?");
     $s->execute([$payload["user_id"]]);
     return $s->fetch() ?: null;

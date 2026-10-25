@@ -92,6 +92,13 @@ def make_jwt(secret, user_id, role, exp_delta=3600):
     sig = base64.urlsafe_b64encode(hmac.new(secret.encode(), (h + "." + p).encode(), hashlib.sha256).digest()).decode().rstrip("=")
     return h + "." + p + "." + sig
 
+def make_pending(secret, provider="google", sub="g-123", role="customer", email="social@test.local", exp_delta=900, typ="social_pending"):
+    b = lambda d: base64.b64encode(json.dumps(d, separators=(",", ":")).encode()).decode()
+    h = b({"alg": "HS256", "typ": "JWT"})
+    pl = b({"typ": typ, "provider": provider, "sub": sub, "email": email, "name": "Social User", "photo": None, "role": role, "exp": int(time.time()) + exp_delta, "iat": int(time.time())})
+    sig = base64.urlsafe_b64encode(hmac.new(secret.encode(), (h + "." + pl).encode(), hashlib.sha256).digest()).decode().rstrip("=")
+    return h + "." + pl + "." + sig
+
 def parallel(n, fn):
     with cf.ThreadPoolExecutor(n) as ex: return list(ex.map(lambda _: fn(), range(n)))
 
@@ -385,6 +392,59 @@ def main():
     check("E: payment return page asks the server, not the browser, for the result", "checkPaymentReturn" in js and "action=verify" in js)
     check("E: bookings list shows payment status and a retry button", "Payment pending" in js and "Pay now" in js)
     check("E: top-up sends an idempotency key and no client 'method'", "idempotency_key" in js and 'method:"test"' not in js)
+
+    # ================= F. BOOKING INPUT VALIDATION, DOUBLE-BOOKING, SOCIAL SIGN-IN =================
+    free_car(); n0 = db("SELECT COUNT(*) n FROM bookings")[0]["n"]
+    bad_inputs = [({"booking_type": "bogus"}, "unknown booking_type"), ({"booking_type": "hourly", "duration_hours": -5}, "negative hours"),
+                  ({"booking_type": "hourly", "duration_hours": 0}, "zero hours"), ({"booking_type": "hourly", "duration_hours": 1e9}, "absurd hours"),
+                  ({"booking_type": "daily", "duration_days": 0}, "zero days"), ({"booking_type": "daily", "duration_days": 100000}, "absurd days"),
+                  ({"booking_type": "trip", "pickup_address": "x" * 300}, "300-char pickup"), ({"booking_type": "trip", "city": ""}, "empty city")]
+    for extra, label in bad_inputs:
+        free_car()  # a previous accepted request would lock the car and mask a missing validation
+        body = dict({"car_id": car_id, "booking_type": "trip", "pickup_address": "Marian Rd", "city": "Calabar"}, **extra)
+        c, r = P("bookings.php", "create", body, CT)
+        check("F: booking rejected: %s" % label, c in (400, 422) and "error" in r, (c, r))
+    check("F: rejected requests created no booking and did not lock the car", db("SELECT COUNT(*) n FROM bookings")[0]["n"] == n0 and db("SELECT is_available a FROM cars WHERE id=?", (car_id,))[0]["a"] == 1)
+    check("F: no negative or zero priced booking exists", db("SELECT COUNT(*) n FROM bookings WHERE total_price<=0")[0]["n"] == 0)
+
+    free_car()
+    res = parallel(8, lambda: P("bookings.php", "create", {"car_id": car_id, "booking_type": "trip", "pickup_address": "Race", "city": "Calabar"}, CT)[1])
+    check("F: 8 simultaneous bookings of one chauffeur car -> exactly one succeeds", sum(1 for x in res if "booking_id" in x) == 1, [x.get("booking_id") or x.get("error") for x in res])
+    check("F: exactly one live booking on the car", db("SELECT COUNT(*) n FROM bookings WHERE car_id=? AND status IN ('pending','confirmed','active')", (car_id,))[0]["n"] == 1)
+    c, r = P("cars.php", "admin_add", {"name": "Race Prado", "car_type": "self_drive", "plate_number": "RC-01", "city": "Calabar", "security_deposit": 5000}, AT); sd = int(r["id"])
+    res = parallel(8, lambda: P("bookings.php", "create", {"car_id": sd, "booking_type": "daily", "pickup_address": "Race", "duration_days": 1, "city": "Calabar"}, C2T)[1])
+    check("F: 8 simultaneous bookings of one self-drive car -> exactly one succeeds", sum(1 for x in res if "booking_id" in x) == 1, [x.get("booking_id") or x.get("error") for x in res])
+
+    # set_city: an anonymous caller must not be able to mint accounts or sessions
+    users0 = db("SELECT COUNT(*) n FROM users")[0]["n"]
+    c, r = P("auth.php", "set_city", {"city": "Calabar", "google_id": "forged-1", "role": "admin", "email": "evil@test.local", "name": "Evil"})
+    check("F: set_city without a server-issued token is refused (401), no session", c == 401 and "token" not in r, (c, r))
+    c, r = P("auth.php", "set_city", {"city": "Calabar", "apple_id": "forged-2", "role": "admin"})
+    check("F: set_city with a client-chosen apple_id is refused", c == 401 and "token" not in r, (c, r))
+    check("F: no user was created by the forged requests", db("SELECT COUNT(*) n FROM users")[0]["n"] == users0)
+    c, r = P("auth.php", "set_city", {"city": "Calabar", "pending_token": make_pending("wrong-secret-wrong-secret-wrong-secret-1234")})
+    check("F: pending token signed with another secret rejected", c == 401, (c, r))
+    c, r = P("auth.php", "set_city", {"city": "Calabar", "pending_token": make_pending(JWT, exp_delta=-10)})
+    check("F: expired pending token rejected", c == 401, (c, r))
+    c, r = P("auth.php", "set_city", {"city": "Calabar", "pending_token": make_jwt(JWT, 1, "admin")})
+    check("F: an ordinary login token is not accepted as a pending token", c == 401, (c, r))
+    c, r = P("auth.php", "set_city", {"city": "Calabar", "pending_token": make_pending(JWT, role="admin", sub="g-admin")})
+    check("F: a pending token can never create an admin", c == 401 and not db("SELECT 1 FROM users WHERE google_id='g-admin'"), (c, r))
+    c, r = P("bookings.php", "get_my_bookings", token=make_pending(JWT))
+    check("F: a pending token is not usable as a bearer/login token", c == 401, (c, r))
+    pt = make_pending(JWT, sub="g-good", email="good@test.local")
+    c, r = P("auth.php", "set_city", {"city": "Calabar", "pending_token": pt, "role": "admin", "google_id": "other", "email": "other@test.local"})
+    u = db("SELECT role,google_id,email FROM users WHERE google_id='g-good'")
+    check("F: valid pending token creates the account from the TOKEN's identity (client role/id/email ignored)", c == 200 and r.get("token") and u == [{"role": "customer", "google_id": "g-good", "email": "good@test.local"}], (c, r, u))
+    c, r = P("auth.php", "set_city", {"city": "Ikom", "pending_token": pt})
+    check("F: replaying the pending token does not duplicate the account", c == 200 and db("SELECT COUNT(*) n FROM users WHERE google_id='g-good'")[0]["n"] == 1, (c, r))
+    c, r = P("auth.php", "apple_login", {"id_token": "a.eyJzdWIiOiJ4In0.c", "role": "customer"})
+    check("F: Sign in with Apple is disabled in production (token signature is not verified)", c == 503 and "token" not in r, (c, r))
+    c, r = D("auth.php", "apple_login", {"id_token": "a.eyJzdWIiOiJ4In0.c", "role": "customer"})
+    check("F: Apple login in development returns a pending token, not a session", r.get("needs_city") is True and r.get("pending_token") and "token" not in r and "apple_id" not in r, (c, r))
+    src = open(os.path.join(ROOT, "api", "api", "auth.php")).read()
+    check("F: Google sign-in links an existing account by e-mail only when Google says the e-mail is verified", "email_verified" in src)
+    print("NOTE: google_login's call to Google's tokeninfo endpoint is not exercised (no network in tests).")
 
     for p in procs:
         stop(p)

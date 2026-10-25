@@ -42,6 +42,12 @@ The endpoint paths, auth header scheme, amount units, response codes (`00000`), 
 | `admin.php` add_damage_report | + | `deposit_released` claim, same transaction as the report |
 | `auth.php` createUser | + ₦1,000 | **welcome credit, unrestricted per signup (known risk: credit farming; see audit)** |
 
+## Sign-in and booking hardening (added after the payment work)
+* `set_city` no longer trusts the browser. `google_login`/`apple_login` return a 15-minute signed `pending_token`; `set_city` takes the provider id, e-mail, name, photo and role **from that token only** (role can only be customer/driver, never admin). Before this, an anonymous request could create an admin account and receive a session.
+* **Sign in with Apple is disabled in production (HTTP 503).** The Apple identity token's signature was never verified, so a forged token could log in as any account with a matching e-mail. Re-enable only after implementing and testing Apple JWKS, issuer, audience and expiry checks.
+* Google sign-in links to an existing account by e-mail only when Google reports `email_verified`.
+* `bookings.php create` validates type, hours (0.5-168), days (1-60) and text lengths, and claims the car with one conditional `UPDATE` inside the booking transaction (no double booking). Before this, `duration_hours=-5` produced a **negative** total.
+
 ## Environment
 `APP_ENV` is an allow-list: only `development`, `local`, `test`, `testing` enable test behaviour (fixed OTP, dev JWT fallback, simulator, test top-ups). **Anything else, including unset, `prod`, `staging`, is treated as production.** In production the app refuses to start with a missing, short (<32) or `REPLACE_WITH…` `JWT_SECRET`, and refuses `REPLACE_WITH…` database settings. `ADMIN_PORTAL_KEY` (≥16 chars, not a placeholder) is the only way to open the secret-URL admin portal; the old hard-coded key is gone from the code but **was public in the repository history, so never reuse it**.
 Runtime: PHP **8.0+** is required (`str_starts_with`, `str_contains`); CI tests 8.1 and 8.3. Extensions: `pdo_mysql`, `curl`.

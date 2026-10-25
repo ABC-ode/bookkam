@@ -54,7 +54,16 @@ switch ($action) {
         $pickupCoords  = $input["pickup_coords"]  ?? null;
         $dropoffCoords = $input["dropoff_coords"] ?? null;
         if (!$carId || !$type) respondError("car_id and booking_type required");
-        if (!$pickup) respondError("Pickup address required");
+        if (!in_array($type, ["hourly","daily","trip"], true)) respondError("Invalid booking_type", 422);
+        if (!is_string($pickup) || trim($pickup) === "" || mb_strlen($pickup) > 255) respondError("Pickup address required (max 255 characters)", 422);
+        if (!is_string($dropoff) || mb_strlen($dropoff) > 255) respondError("Invalid drop-off address", 422);
+        if (!is_string($city) || trim($city) === "" || mb_strlen($city) > 60) respondError("Invalid city", 422);
+        // Reject nonsense quantities: they feed straight into the price (a negative or NaN duration
+        // would otherwise create a negative or free booking).
+        if (!is_finite($duration) || $duration < 0.5 || $duration > 168) respondError("duration_hours must be between 0.5 and 168", 422);
+        if ($days < 1 || $days > 60) respondError("duration_days must be between 1 and 60", 422);
+        $pickupCoords  = is_string($pickupCoords)  ? mb_substr($pickupCoords, 0, 100)  : null;
+        $dropoffCoords = is_string($dropoffCoords) ? mb_substr($dropoffCoords, 0, 100) : null;
 
         // Get car
         $cs = $pdo->prepare("SELECT c.*, d.id as did, d.status as driver_status, d.is_online as driver_online FROM cars c LEFT JOIN drivers d ON c.driver_id=d.id WHERE c.id=?");
@@ -102,22 +111,31 @@ switch ($action) {
 
         $driverId = $car["did"] ?? null;
 
-        $pdo->prepare("INSERT INTO bookings (customer_id,driver_id,car_id,booking_type,car_type,status,
-            pickup_address,dropoff_address,pickup_coords,dropoff_coords,
-            duration_hours,duration_days,total_price,security_deposit,
-            commission_amount,city,start_time)
-            VALUES (?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?,NOW())")
-            ->execute([$user["id"],$driverId,$carId,$type,$car["car_type"],
-                $pickup,$dropoff,$pickupCoords,$dropoffCoords,
-                $duration,$days,$total,$deposit,$commission,$city]);
-
-        $bookingId = $pdo->lastInsertId();
-
-        // Mark car unavailable
-        if ($car["car_type"] === "self_drive") {
-            $pdo->prepare("UPDATE cars SET availability_status='in_use',is_available=0 WHERE id=?")->execute([$carId]);
-        } else {
-            $pdo->prepare("UPDATE cars SET is_available=0 WHERE id=?")->execute([$carId]);
+        // Claim the car and create the booking in ONE transaction. The conditional UPDATE is the
+        // lock: only one concurrent request can flip the car from available to unavailable.
+        $pdo->beginTransaction();
+        try {
+            if ($car["car_type"] === "self_drive") {
+                $claim = $pdo->prepare("UPDATE cars SET availability_status='in_use',is_available=0 WHERE id=? AND availability_status='available'");
+            } else {
+                $claim = $pdo->prepare("UPDATE cars SET is_available=0 WHERE id=? AND is_available=1");
+            }
+            $claim->execute([$carId]);
+            if ($claim->rowCount() !== 1) { $pdo->rollBack(); respondError("Car is not available", 409); }
+            $pdo->prepare("INSERT INTO bookings (customer_id,driver_id,car_id,booking_type,car_type,status,
+                pickup_address,dropoff_address,pickup_coords,dropoff_coords,
+                duration_hours,duration_days,total_price,security_deposit,
+                commission_amount,city,start_time)
+                VALUES (?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?,NOW())")
+                ->execute([$user["id"],$driverId,$carId,$type,$car["car_type"],
+                    $pickup,$dropoff,$pickupCoords,$dropoffCoords,
+                    $duration,$days,$total,$deposit,$commission,$city]);
+            $bookingId = $pdo->lastInsertId();
+            $pdo->commit();
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            error_log("BOOKKAM booking create failed: " . $e->getMessage());
+            respondError("Could not create booking", 500);
         }
 
         // Notify driver (chauffeur only)

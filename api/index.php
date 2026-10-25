@@ -13,6 +13,8 @@ if ($adminPortalKey === '') {
         }
     }
 }
+// A copied placeholder or short value must not open the portal.
+if (stripos($adminPortalKey, 'REPLACE_WITH') !== false || strlen($adminPortalKey) < 16) $adminPortalKey = '';
 $adminPortal = $adminPortalKey !== '' && isset($_GET['bkp']) && hash_equals($adminPortalKey, (string)$_GET['bkp']);
 ?>
 <!DOCTYPE html>
@@ -947,7 +949,6 @@ $adminPortal = $adminPortalKey !== '' && isset($_GET['bkp']) && hash_equals($adm
         '<div class="gy-empty-state">' +
           '<strong>' + escapeHTML(message) + '</strong>' +
           '<span>' + escapeHTML(detail) + '</span>' +
-          '<a href="/?bkp=bk_adm_2026">Open admin cars</a>' +
         '</div>';
     }
 
@@ -1596,13 +1597,13 @@ $adminPortal = $adminPortalKey !== '' && isset($_GET['bkp']) && hash_equals($adm
 <script src="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js" async defer></script>
-<script src="/js/utils.js?v=5"></script>
-<script src="/js/app.js?v=5"></script>
-<script src="/js/maps.js?v=5"></script>
-<script src="/js/auth.js?v=5"></script>
-<script src="/js/customer.js?v=5"></script>
-<script src="/js/driver.js?v=5"></script>
-<script src="/js/admin.js?v=7"></script>
+<script src="/js/utils.js?v=6"></script>
+<script src="/js/app.js?v=6"></script>
+<script src="/js/maps.js?v=6"></script>
+<script src="/js/auth.js?v=6"></script>
+<script src="/js/customer.js?v=6"></script>
+<script src="/js/driver.js?v=6"></script>
+<script src="/js/admin.js?v=8"></script>
 <script>
   // Register service worker for PWA
   if ('serviceWorker' in navigator) {

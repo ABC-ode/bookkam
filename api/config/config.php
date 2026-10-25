@@ -16,13 +16,22 @@ function env(string $key, string $default = ""): string {
 }
 
 // ── Mode ──────────────────────────────────────────────────────────────────────
-// Fail closed: development/test behaviour must be explicitly enabled.
-define("TEST_MODE", env("APP_ENV", "production") !== "production");
+// Fail closed: development/test behaviour (fixed OTP, simulated payments, test wallet
+// credits, dev JWT fallback) is enabled ONLY by an explicit allow-listed APP_ENV value.
+// A missing, mistyped or unexpected value (e.g. "prod", "staging") is treated as production.
+define("TEST_MODE", in_array(strtolower(env("APP_ENV", "production")), ["development", "local", "test", "testing"], true));
 define("TEST_OTP",  "123456");
 
 // ── Secrets — loaded from .env ────────────────────────────────────────────────
 // JWT: generate your secret with: php -r "echo bin2hex(random_bytes(32));"
 $jwtSecret = env("JWT_SECRET");
+// A copied .env.example placeholder or a short value is not a secret.
+$jwtIsPlaceholder = $jwtSecret !== "" && (stripos($jwtSecret, "REPLACE_WITH") !== false || strlen($jwtSecret) < 32);
+if ($jwtIsPlaceholder && !TEST_MODE) {
+    http_response_code(500);
+    echo json_encode(["error" => "Server misconfiguration: JWT_SECRET is a placeholder or too short"]);
+    exit;
+}
 if (empty($jwtSecret)) {
     if (TEST_MODE) {
         // Dev fallback — safe only because TEST_MODE is on

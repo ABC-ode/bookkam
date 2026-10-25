@@ -7,74 +7,15 @@ $input  = json_decode(file_get_contents("php://input"), true) ?? [];
 $action = $_GET["action"] ?? $input["action"] ?? "";
 $user   = getAuthUser($pdo);
 
-// ── OPay helpers ─────────────────────────────────────────────────────────────
-// This checkout flow is NOT verified for production. Before enabling it, confirm
-// request signing, endpoint paths, amount/currency units, response fields, and
-// webhook/status semantics against the current official OPay merchant docs.
-// Keep OPAY_ENABLED=false until those checks and end-to-end merchant tests pass.
-function opayInitialize($reference, $amountKobo, $email, $callbackUrl) {
-    if (!OPAY_ENABLED) return ["status" => false, "message" => "Opay is not enabled"];
-    $curl = curl_init();
-    curl_setopt_array($curl, [
-        CURLOPT_URL            => "https://api.opaycheckout.com/api/v1/international/cashier/create",
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_CONNECTTIMEOUT => 5,
-        CURLOPT_TIMEOUT        => 15,
-        CURLOPT_POST           => true,
-        CURLOPT_HTTPHEADER     => [
-            "Authorization: Bearer " . OPAY_SECRET_KEY,
-            "MerchantId: " . OPAY_MERCHANT_ID,
-            "Content-Type: application/json",
-        ],
-        CURLOPT_POSTFIELDS => json_encode([
-            "reference"   => $reference,
-            "amount"      => ["total" => $amountKobo, "currency" => "NGN"],
-            "returnUrl"   => $callbackUrl,
-            "callbackUrl" => $callbackUrl,
-            "country"     => "NG",
-            "payMethod"   => "BankCard",
-            "userInfo"    => ["userEmail" => $email],
-        ]),
-    ]);
-    $res = curl_exec($curl);
-    $err = curl_error($curl);
-    $http = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
-    curl_close($curl);
-    if ($err) {
-        error_log("BOOKKAM OPay initialization transport failure: " . $err);
-        return ["status" => false, "message" => "Payment provider is temporarily unavailable"];
-    }
-    if ($http < 200 || $http >= 300) {
-        error_log("BOOKKAM OPay initialization returned HTTP " . $http);
-        return ["status" => false, "message" => "Payment provider is temporarily unavailable"];
-    }
-    return json_decode($res, true) ?: ["status" => false, "message" => "Invalid Opay response"];
+require_once __DIR__ . "/../services/PaymentGateway.php";
+
+// Provider calls live in api/services (interface + OPay adapter + dev-only simulator).
+// OPay is NOT verified for production: keep OPAY_ENABLED=false (see docs/payments.md).
+function providerFor(string $name) {
+    return PaymentGateway::provider($name, !TEST_MODE);
 }
 
-function opayVerify($reference) {
-    if (!OPAY_ENABLED) return ["status" => false, "message" => "Opay is not enabled"];
-    $curl = curl_init();
-    curl_setopt_array($curl, [
-        CURLOPT_URL            => "https://api.opaycheckout.com/api/v1/international/cashier/status",
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST           => true,
-        CURLOPT_HTTPHEADER     => [
-            "Authorization: Bearer " . OPAY_SECRET_KEY,
-            "MerchantId: " . OPAY_MERCHANT_ID,
-            "Content-Type: application/json",
-        ],
-        CURLOPT_POSTFIELDS => json_encode(["reference" => $reference, "country" => "NG"]),
-    ]);
-    $res = curl_exec($curl);
-    $err = curl_error($curl);
-    $http = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
-    curl_close($curl);
-    if ($err || $http < 200 || $http >= 300) {
-        error_log("BOOKKAM OPay status check failed" . ($err ? ": " . $err : " (HTTP " . $http . ")"));
-        return ["status" => false];
-    }
-    return json_decode($res, true) ?: ["status" => false];
-}
+function jsonOut(array $data, int $code) { http_response_code($code); echo json_encode($data); exit; }
 
 // ── Load a booking from whichever table it lives in ────────────────────────
 function loadBooking($pdo, $bookingType, $bookingId) {
@@ -123,25 +64,59 @@ function instantSuccess($pdo, $bookingType, $bookingId, $amount, $deposit, $meth
     }
 }
 
+// Turn a provider verify() result into a booking/payment outcome. Returns [httpCode, body].
+function applyProviderResult($pdo, $ref, array $res) {
+    $status = $res["status"] ?? "unavailable";
+    if ($status === "success") {
+        $r = confirmByReference($pdo, $ref, $res["amount_minor"] ?? null, $res["currency"] ?? null);
+        if (in_array($r, ["confirmed", "already_success", "ignored"], true)) return [200, ["status" => "success"]];
+        if ($r === "not_found")         return [404, ["error" => "Payment reference not found", "status" => "unknown"]];
+        if ($r === "amount_mismatch")   return [409, ["error" => "Payment amount does not match the booking", "status" => "mismatch"]];
+        if ($r === "currency_mismatch") return [409, ["error" => "Payment currency does not match", "status" => "mismatch"]];
+        if ($r === "refunded")          return [409, ["error" => "Payment was received but could not be applied to this booking; it was returned to your wallet", "status" => "refunded"]];
+        return [500, ["error" => "Payment could not be confirmed", "status" => "error"]];
+    }
+    // Failed / cancelled / pending / unavailable never change a booking.
+    // (payments.status has no 'failed' value we can rely on: the live enum is not in the repo.)
+    if ($status === "failed" || $status === "cancelled") {
+        error_log("BOOKKAM payment not completed ref=$ref provider_status=$status");
+        return [402, ["error" => "Payment was not completed", "status" => $status]];
+    }
+    if ($status === "pending") return [202, ["status" => "pending", "message" => "Payment is still being processed"]];
+    return [502, ["error" => "Could not verify payment right now. Please try again shortly.", "status" => "unavailable"]];
+}
+
 function assertPayable($booking, $bookingType) {
     if (in_array($booking["status"], ["cancelled", "completed"], true)) respondError("This booking can no longer be paid");
     if ($bookingType !== "event" && ($booking["payment_status"] ?? "") === "paid") respondError("This booking is already paid");
+    // Event bookings carry no payment_status: they are payable only while still pending
+    // (a confirmed one was either paid already or confirmed by an admin).
+    if ($bookingType === "event" && $booking["status"] !== "pending") respondError("This booking can no longer be paid");
 }
 
-// Called from the OPay webhook and from verify. Idempotent: a payment row is
-// claimed exactly once. $paidKobo (from the provider) must cover the amount we expect.
-// If the booking can no longer take the payment (cancelled / already paid) the money is
-// returned to the customer's wallet instead of being lost or double-applied.
-function confirmByReference($pdo, $ref, $paidKobo = null) {
+// Called ONLY with a result obtained from the provider's own verification API (never from a
+// browser claim or a raw webhook body). Idempotent: a payment row is claimed exactly once,
+// inside the same transaction that settles the booking (or credits the wallet), so the row
+// can never read "success" without the matching financial/booking change.
+// Policy for a late or duplicate-payment: if the booking can no longer take the payment
+// (cancelled / already paid) the amount is credited to the customer's wallet with a
+// notification (event bookings have no wallet: logged for manual refund).
+// The paid amount must EQUAL the expected total and the currency must be NGN; a missing
+// currency or amount is treated as a mismatch (fail closed).
+function confirmByReference($pdo, $ref, $paidMinor, $currency) {
     $ps = $pdo->prepare("SELECT * FROM payments WHERE provider_reference=?");
     $ps->execute([$ref]);
     $payment = $ps->fetch();
     if (!$payment) return "not_found";
     if ($payment["status"] === "success") return "already_success";
 
+    if ($currency !== "NGN") {
+        error_log("BOOKKAM payment currency mismatch ref=$ref");
+        return "currency_mismatch";
+    }
     $expectedKobo = (int)round(((float)$payment["amount"] + (float)$payment["deposit_amount"]) * 100);
-    if ($paidKobo !== null && (int)$paidKobo < $expectedKobo) {
-        error_log("BOOKKAM payment amount mismatch ref=$ref paid=$paidKobo expected=$expectedKobo");
+    if ($paidMinor === null || (int)$paidMinor !== $expectedKobo) {
+        error_log("BOOKKAM payment amount mismatch ref=$ref paid=" . var_export($paidMinor, true) . " expected=$expectedKobo");
         return "amount_mismatch";
     }
 
@@ -182,7 +157,8 @@ switch ($action) {
     // ── Tells the frontend which methods are actually usable right now ─────
     case "get_methods": {
         respond([
-            "opay"     => OPAY_ENABLED && !empty(OPAY_SECRET_KEY) && !empty(OPAY_MERCHANT_ID),
+            "opay"     => OPAY_ENABLED,
+            "wallet_top_up" => TEST_MODE, "test_mode" => TEST_MODE, // production top-up needs a verified provider flow (not built)
         ]);
     }
 
@@ -235,8 +211,12 @@ switch ($action) {
                 // Booking record already exists (created as "pending" at submit time).
                 // Cash is settled with the driver later, so it stays pending here —
                 // an admin marks it confirmed once collected.
-                $pdo->prepare("INSERT INTO payments (booking_id,amount,deposit_amount,method,status,is_test,booking_kind) VALUES (?,?,?,?,'pending',?,?)")
-                    ->execute([$bookingId, $amount, $deposit, "cash", TEST_MODE ? 1 : 0, $bookingType]);
+                $dup = $pdo->prepare("SELECT 1 FROM payments WHERE booking_id=? AND booking_kind=? AND method='cash' AND status='pending'");
+                $dup->execute([$bookingId, $bookingType]);
+                if (!$dup->fetch()) {
+                    $pdo->prepare("INSERT INTO payments (booking_id,amount,deposit_amount,method,status,is_test,booking_kind) VALUES (?,?,?,?,'pending',?,?)")
+                        ->execute([$bookingId, $amount, $deposit, "cash", TEST_MODE ? 1 : 0, $bookingType]);
+                }
                 respond(["success" => true, "method" => "cash", "status" => "pending", "message" => "Cash payment recorded — booking stays pending until confirmed"]);
                 break;
             }
@@ -250,16 +230,29 @@ switch ($action) {
 
 
             case "opay": {
-                if (!OPAY_ENABLED) respondError("Opay is not available yet — please choose another payment method");
-                $ref  = "BKM-OP-" . strtoupper($bookingType) . "-" . $bookingId . "-" . time() . bin2hex(random_bytes(3));
-                $data = opayInitialize($ref, (int)round($totalCharge * 100), $email, "https://bookkam.com/?opay_return=1&booking_type=$bookingType");
-                $checkoutUrl = $data["data"]["cashierUrl"] ?? "";
-                if (($data["code"] ?? "") === "00000" && filter_var($checkoutUrl, FILTER_VALIDATE_URL)) {
+                if (!OPAY_ENABLED) respondError("Opay is not available yet — please choose another payment method", 503);
+                $ref = "BKM-OP-" . strtoupper($bookingType) . "-" . $bookingId . "-" . time() . bin2hex(random_bytes(3));
+                $r   = providerFor("opay")->initiate($ref, (int)round($totalCharge * 100), "NGN", $email,
+                    ["callback_url" => "https://bookkam.com/?opay_return=1&booking_type=$bookingType"]);
+                if (($r["status"] ?? "") === "pending" && !empty($r["checkout_url"])) {
                     $pdo->prepare("INSERT INTO payments (booking_id,amount,deposit_amount,method,status,provider_reference,booking_kind) VALUES (?,?,?,?,'pending',?,?)")
                         ->execute([$bookingId, $amount, $deposit, "opay", $ref, $bookingType]);
-                    respond(["success" => true, "authorization_url" => $checkoutUrl, "reference" => $ref]);
+                    // A checkout URL is NOT proof of payment: the booking stays pending until verify/webhook.
+                    respond(["success" => true, "authorization_url" => $r["checkout_url"], "reference" => $ref]);
                 }
-                respondError($data["message"] ?? "Opay payment initiation failed");
+                respondError($r["message"] ?? "Opay payment initiation failed", ($r["status"] ?? "") === "unavailable" ? 503 : 400);
+                break;
+            }
+
+            // Development-only: drives the REAL verify/settlement path with a scripted provider result.
+            case "simulator": {
+                if (!TEST_MODE) respondError("Payment simulator is only available in development", 403);
+                $scenario = strtolower((string)($input["scenario"] ?? "success"));
+                if (!in_array($scenario, SimulatorPaymentProvider::SCENARIOS, true)) respondError("Unknown simulator scenario");
+                $ref = SimulatorPaymentProvider::buildReference($scenario, (int)round($totalCharge * 100), $bookingType . $bookingId . "-" . bin2hex(random_bytes(4)));
+                $pdo->prepare("INSERT INTO payments (booking_id,amount,deposit_amount,method,status,is_test,provider_reference,booking_kind) VALUES (?,?,?,?,'pending',1,?,?)")
+                    ->execute([$bookingId, $amount, $deposit, "test", $ref, $bookingType]);
+                respond(["success" => true, "reference" => $ref, "message" => "SIMULATED ONLY: call verify to settle"]);
                 break;
             }
 
@@ -268,70 +261,61 @@ switch ($action) {
         break;
     }
 
-    // ── Opay webhook — inert unless OPAY_ENABLED. The payload is never trusted:
-    // the status is re-checked with Opay's own status API before anything is confirmed.
+    // ── Opay webhook — inert unless OPAY_ENABLED. The body is an untrusted hint: only the
+    // reference is read from it, and the real status/amount/currency come from OPay's own API.
+    // Provider outage => 503 so the provider retries; unknown references are acknowledged.
     case "opay_webhook": {
         if (!OPAY_ENABLED) { http_response_code(200); echo "OK"; exit; }
-        $payload = json_decode(file_get_contents("php://input"), true) ?? [];
-        $ref     = $payload["reference"] ?? ($payload["payload"]["reference"] ?? "");
-        if ($ref && str_starts_with($ref, "BKM-OP-")) {
-            $data = opayVerify($ref);
-            if (($data["data"]["status"] ?? "") === "SUCCESS") {
-                $amt = $data["data"]["amount"]["total"] ?? null;
-                $r = confirmByReference($pdo, $ref, $amt !== null ? (int)$amt : 0);
-                if ($r === "error") { http_response_code(500); exit; }
-            }
-        }
+        $payload = json_decode(file_get_contents("php://input"), true);
+        $ref     = is_array($payload) ? (string)($payload["reference"] ?? ($payload["payload"]["reference"] ?? "")) : "";
+        if ($ref === "" || PaymentGateway::nameForReference($ref) !== "opay") { http_response_code(200); echo "OK"; exit; }
+        [$code, $body] = applyProviderResult($pdo, $ref, providerFor("opay")->verify($ref));
+        if ($code >= 500 || ($body["status"] ?? "") === "unavailable") { http_response_code(503); exit; }
         http_response_code(200);
         echo "OK";
         exit;
     }
 
+    // Customer-facing status check (also what the return page should call).
     case "verify": {
-        $ref = $_GET["reference"] ?? $input["reference"] ?? "";
-        if (!$ref) respondError("Reference required");
-        if (str_starts_with($ref, "BKM-OP-")) {
-            if (!OPAY_ENABLED) respondError("Opay is not enabled");
-            $data = opayVerify($ref);
-            if (($data["data"]["status"] ?? "") === "SUCCESS") {
-                $result = confirmByReference($pdo, $ref, (int)($data["data"]["amount"]["total"] ?? 0));
-                if (in_array($result, ["confirmed", "already_success"], true)) {
-                    respond(["status" => "success"]);
-                }
-                if ($result === "not_found") respondError("Payment reference not found", 404);
-                if ($result === "amount_mismatch") respondError("Payment amount does not match the booking", 409);
-                if ($result === "refunded") respondError("Payment was received but could not be applied to this booking", 409);
-                respondError("Payment could not be confirmed", 500);
-            }
-            respondError("Payment not verified");
-        }
-
-        respondError("Unknown payment reference");
+        $ref = (string)($_GET["reference"] ?? $input["reference"] ?? "");
+        if ($ref === "" || strlen($ref) > 255) respondError("Reference required");
+        $name = PaymentGateway::nameForReference($ref);
+        if ($name === null || ($name === "simulator" && !TEST_MODE)) respondError("Unknown payment reference", 404);
+        if ($name === "opay" && !OPAY_ENABLED) respondError("Opay is not enabled", 503);
+        [$code, $body] = applyProviderResult($pdo, $ref, providerFor($name)->verify($ref));
+        jsonOut($body, $code);
     }
 
     case "top_up_wallet": {
         if (!$user) respondError("Unauthorised", 401);
+        // No verified provider-backed top-up exists, so production never credits a wallet
+        // from this endpoint, whatever the client sends.
+        if (!TEST_MODE) respondError("Wallet top-ups are temporarily unavailable. Please contact support.", 503);
+
         $amount = filter_var($input["amount"] ?? null, FILTER_VALIDATE_FLOAT);
-        // Keep test credits bounded and prevent zero, negative, NaN, or absurd values.
         if ($amount === false || !is_finite((float)$amount) || $amount <= 0 || $amount > 1000000) {
             respondError("Amount must be greater than zero and no more than ₦1,000,000", 422);
         }
-        if (!TEST_MODE) {
-            // Do not credit real wallets until a verified provider-backed top-up flow exists.
-            respondError("Wallet top-ups are temporarily unavailable. Please contact support.", 503);
-        }
+        $key = (string)($input["idempotency_key"] ?? bin2hex(random_bytes(12)));
+        if (!preg_match('/^[A-Za-z0-9_-]{8,64}$/', $key)) respondError("Invalid idempotency_key", 422);
+        $ref = "test_wallet_" . (int)$user["id"] . "_" . $key;
 
-        // Test-only credits are atomic and auditable; never expose this path in production.
+        // Test-only credit: atomic, labelled (method 'test', is_test=1, 'test_wallet_' reference),
+        // idempotent per key (also enforced by the unique index from migration 007).
         $pdo->beginTransaction();
         try {
-            $u = $pdo->prepare("UPDATE users SET wallet_balance=wallet_balance+? WHERE id=?");
-            $u->execute([(float)$amount, $user["id"]]);
-            if ($u->rowCount() !== 1) {
-                throw new RuntimeException("Wallet owner not found");
+            $dup = $pdo->prepare("SELECT 1 FROM payments WHERE provider_reference=?");
+            $dup->execute([$ref]);
+            $credited = false;
+            if (!$dup->fetch()) {
+                $u = $pdo->prepare("UPDATE users SET wallet_balance=wallet_balance+? WHERE id=?");
+                $u->execute([(float)$amount, $user["id"]]);
+                if ($u->rowCount() !== 1) throw new RuntimeException("Wallet owner not found");
+                $pdo->prepare("INSERT INTO payments (booking_id, booking_kind, amount, deposit_amount, method, status, is_test, provider_reference)
+                    VALUES (0, 'topup', ?, 0, 'test', 'success', 1, ?)")->execute([(float)$amount, $ref]);
+                $credited = true;
             }
-            $p = $pdo->prepare("INSERT INTO payments (booking_id, booking_kind, amount, method, status, is_test, provider_reference)
-                VALUES (NULL, 'wallet_top_up', ?, 'test', 'success', 1, ?)");
-            $p->execute([(float)$amount, "test_wallet_" . bin2hex(random_bytes(12))]);
             $pdo->commit();
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) $pdo->rollBack();
@@ -341,7 +325,8 @@ switch ($action) {
         $s = $pdo->prepare("SELECT wallet_balance FROM users WHERE id=?");
         $s->execute([$user["id"]]);
         $u = $s->fetch();
-        respond(["success" => true, "new_balance" => $u["wallet_balance"], "message" => "Test wallet topped up"]);
+        respond(["success" => true, "credited" => $credited, "new_balance" => $u["wallet_balance"],
+                 "message" => $credited ? "Test wallet topped up" : "Duplicate request ignored"]);
     }
 
     case "get_wallet": {

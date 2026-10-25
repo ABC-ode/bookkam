@@ -10,3 +10,6 @@ error_log
 
 # OS / editor
 .DS_Store
+
+__pycache__/
+*.pyc

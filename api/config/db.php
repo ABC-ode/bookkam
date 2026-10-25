@@ -18,6 +18,14 @@ $dbname   = $_ENV["DB_NAME"] ?? "bookkam";
 $username = $_ENV["DB_USER"] ?? "root";
 $password = $_ENV["DB_PASS"] ?? "";
 
+foreach ([$username, $password, $dbname] as $v) {
+    if (stripos((string)$v, "REPLACE_WITH") !== false) {
+        http_response_code(500);
+        echo json_encode(["error" => "Server misconfiguration: database settings are placeholders"]);
+        exit;
+    }
+}
+
 try {
     $pdo = new PDO(
         "mysql:host=$host;port=$port;dbname=$dbname;charset=utf8mb4",

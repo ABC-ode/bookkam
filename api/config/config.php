@@ -16,7 +16,8 @@ function env(string $key, string $default = ""): string {
 }
 
 // ── Mode ──────────────────────────────────────────────────────────────────────
-define("TEST_MODE", env("APP_ENV", "development") !== "production");
+// Fail closed: development/test behaviour must be explicitly enabled.
+define("TEST_MODE", env("APP_ENV", "production") !== "production");
 define("TEST_OTP",  "123456");
 
 // ── Secrets — loaded from .env ────────────────────────────────────────────────
@@ -39,12 +40,14 @@ define("GOOGLE_CLIENT_ID", env("GOOGLE_CLIENT_ID"));
 define("TERMII_API_KEY",   env("TERMII_API_KEY"));
 define("TERMII_SENDER_ID", env("TERMII_SENDER_ID", "BOOKKAM"));
 
-// Opay — structure in place, OFF by default. Flip OPAY_ENABLED=true in .env
-// once real keys are dropped in below; no code changes needed elsewhere.
-define("OPAY_ENABLED",    env("OPAY_ENABLED", "false") === "true");
+// OPay remains disabled unless explicitly enabled and the server credentials exist.
+// The checkout integration still requires validation against current official OPay docs;
+// credentials alone do not mean it is production-ready.
 define("OPAY_PUBLIC_KEY", env("OPAY_PUBLIC_KEY"));
 define("OPAY_SECRET_KEY", env("OPAY_SECRET_KEY"));
 define("OPAY_MERCHANT_ID", env("OPAY_MERCHANT_ID"));
+define("OPAY_ENABLED", env("OPAY_ENABLED", "false") === "true"
+    && OPAY_SECRET_KEY !== "" && OPAY_MERCHANT_ID !== "");
 
 // Twilio WhatsApp
 define("TWILIO_SID",               env("TWILIO_SID"));

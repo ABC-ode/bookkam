@@ -1,9 +1,19 @@
 <?php
-// Admin portal — accessed only via secret URL param
-// URL: bookkam.com/?bkp=YOUR_SECRET_KEY
-// Change the key below to something only you know
-define('ADMIN_PORTAL_KEY', 'bk_adm_2026');
-$adminPortal = isset($_GET['bkp']) && hash_equals(ADMIN_PORTAL_KEY, $_GET['bkp']);
+// Admin portal access key must be configured on the server, never hard-coded in source.
+// Set ADMIN_PORTAL_KEY in the server environment or api/.env and rotate any previously
+// exposed key. When unset, the secret-URL admin portal stays disabled.
+$adminPortalKey = getenv('ADMIN_PORTAL_KEY') ?: '';
+if ($adminPortalKey === '') {
+    $envFile = __DIR__ . '/.env';
+    if (is_file($envFile)) {
+        foreach (file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+            if (str_starts_with(trim($line), '#') || !str_contains($line, '=')) continue;
+            [$key, $value] = explode('=', $line, 2);
+            if (trim($key) === 'ADMIN_PORTAL_KEY') { $adminPortalKey = trim($value); break; }
+        }
+    }
+}
+$adminPortal = $adminPortalKey !== '' && isset($_GET['bkp']) && hash_equals($adminPortalKey, (string)$_GET['bkp']);
 ?>
 <!DOCTYPE html>
 <html lang="en">

@@ -273,14 +273,16 @@ switch ($action) {
     case "verify": {
         $ref = $_GET["reference"] ?? $input["reference"] ?? "";
         if (!$ref) respondError("Reference required");
-        if (TEST_MODE) respond(["status" => "success", "message" => "Test payment verified"]);
-
         if (str_starts_with($ref, "BKM-OP-")) {
             if (!OPAY_ENABLED) respondError("Opay is not enabled");
             $data = opayVerify($ref);
             if (($data["data"]["status"] ?? "") === "SUCCESS") {
-                confirmByReference($pdo, $ref, (int)($data["data"]["amount"]["total"] ?? 0));
-                respond(["status" => "success"]);
+                $result = confirmByReference($pdo, $ref, (int)($data["data"]["amount"]["total"] ?? 0));
+                if ($result === "confirmed" || $result === "ignored") {
+                    respond(["status" => "success"]);
+                }
+                if ($result === "amount_mismatch") respondError("Payment amount does not match the booking", 409);
+                respondError("Payment could not be confirmed", 500);
             }
             respondError("Payment not verified");
         }

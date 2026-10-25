@@ -113,7 +113,7 @@ function assertPayable($booking, $bookingType) {
     if ($bookingType !== "event" && ($booking["payment_status"] ?? "") === "paid") respondError("This booking is already paid");
 }
 
-// Called from the Paystack/Opay webhook and from verify. Idempotent: a payment row is
+// Called from the OPay webhook and from verify. Idempotent: a payment row is
 // claimed exactly once. $paidKobo (from the provider) must cover the amount we expect.
 // If the booking can no longer take the payment (cancelled / already paid) the money is
 // returned to the customer's wallet instead of being lost or double-applied.
@@ -258,29 +258,6 @@ switch ($action) {
         break;
     }
 
-    // ── Paystack webhook ─────────────────────────────────────────────────────
-    case "webhook": {
-        $payload   = file_get_contents("php://input");
-        $signature = $_SERVER["HTTP_X_PAYSTACK_SIGNATURE"] ?? "";
-        // Signature is mandatory whenever a Paystack secret is configured (even in TEST_MODE).
-        // It may be skipped only when NO secret exists AND we are in a dev environment.
-        $mustSign = !empty(PAYSTACK_SECRET) || !TEST_MODE;
-        if ($mustSign && (empty(PAYSTACK_SECRET) || !$signature || !hash_equals(hash_hmac("sha512", $payload, PAYSTACK_SECRET), $signature))) {
-            http_response_code(401); exit;
-        }
-        $event = json_decode($payload, true);
-        if (($event["event"] ?? "") === "charge.success") {
-            $d = $event["data"] ?? [];
-            if (!empty($d["reference"]) && (($d["currency"] ?? "NGN") === "NGN")) {
-                $r = confirmByReference($pdo, $d["reference"], isset($d["amount"]) ? (int)$d["amount"] : ($mustSign ? 0 : null));
-                if ($r === "error") { http_response_code(500); exit; } // let Paystack retry
-            }
-        }
-        http_response_code(200);
-        echo "OK";
-        exit;
-    }
-
     // ── Opay webhook — inert unless OPAY_ENABLED. The payload is never trusted:
     // the status is re-checked with Opay's own status API before anything is confirmed.
     case "opay_webhook": {
@@ -315,20 +292,7 @@ switch ($action) {
             respondError("Payment not verified");
         }
 
-        $curl = curl_init();
-        curl_setopt_array($curl, [
-            CURLOPT_URL            => "https://api.paystack.co/transaction/verify/$ref",
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_HTTPHEADER     => ["Authorization: Bearer " . PAYSTACK_SECRET],
-        ]);
-        $res  = curl_exec($curl);
-        $data = json_decode($res, true);
-        curl_close($curl);
-        if (($data["data"]["status"] ?? "") === "success") {
-            confirmByReference($pdo, $ref, (int)($data["data"]["amount"] ?? 0));
-            respond(["status" => "success"]);
-        }
-        respondError("Payment not verified");
+        respondError("Unknown payment reference");
     }
 
     case "top_up_wallet": {

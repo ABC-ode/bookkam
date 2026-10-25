@@ -39,10 +39,6 @@ define("GOOGLE_CLIENT_ID", env("GOOGLE_CLIENT_ID"));
 define("TERMII_API_KEY",   env("TERMII_API_KEY"));
 define("TERMII_SENDER_ID", env("TERMII_SENDER_ID", "BOOKKAM"));
 
-// Paystack
-define("PAYSTACK_SECRET", env("PAYSTACK_SECRET"));
-define("PAYSTACK_PUBLIC", env("PAYSTACK_PUBLIC"));
-
 // Opay — structure in place, OFF by default. Flip OPAY_ENABLED=true in .env
 // once real keys are dropped in below; no code changes needed elsewhere.
 define("OPAY_ENABLED",    env("OPAY_ENABLED", "false") === "true");

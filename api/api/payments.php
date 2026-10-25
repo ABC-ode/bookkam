@@ -121,7 +121,8 @@ function confirmByReference($pdo, $ref, $paidKobo = null) {
     $ps = $pdo->prepare("SELECT * FROM payments WHERE paystack_reference=?");
     $ps->execute([$ref]);
     $payment = $ps->fetch();
-    if (!$payment || $payment["status"] === "success") return "ignored";
+    if (!$payment) return "not_found";
+    if ($payment["status"] === "success") return "already_success";
 
     $expectedKobo = (int)round(((float)$payment["amount"] + (float)$payment["deposit_amount"]) * 100);
     if ($paidKobo !== null && (int)$paidKobo < $expectedKobo) {
@@ -279,10 +280,12 @@ switch ($action) {
             $data = opayVerify($ref);
             if (($data["data"]["status"] ?? "") === "SUCCESS") {
                 $result = confirmByReference($pdo, $ref, (int)($data["data"]["amount"]["total"] ?? 0));
-                if ($result === "confirmed" || $result === "ignored") {
+                if (in_array($result, ["confirmed", "already_success"], true)) {
                     respond(["status" => "success"]);
                 }
+                if ($result === "not_found") respondError("Payment reference not found", 404);
                 if ($result === "amount_mismatch") respondError("Payment amount does not match the booking", 409);
+                if ($result === "refunded") respondError("Payment was received but could not be applied to this booking", 409);
                 respondError("Payment could not be confirmed", 500);
             }
             respondError("Payment not verified");

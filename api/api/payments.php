@@ -7,12 +7,11 @@ $input  = json_decode(file_get_contents("php://input"), true) ?? [];
 $action = $_GET["action"] ?? $input["action"] ?? "";
 $user   = getAuthUser($pdo);
 
-// ── Opay helpers ────────────────────────────────────────────────────────────
-// Structure only: every function below is a real, ready-to-use call shape for
-// Opay's Checkout API. They are all gated behind OPAY_ENABLED (config.php),
-// which defaults to false. Flip it to true and set OPAY_PUBLIC_KEY /
-// OPAY_SECRET_KEY / OPAY_MERCHANT_ID in .env to go live — no other code
-// changes are needed anywhere in the app.
+// ── OPay helpers ─────────────────────────────────────────────────────────────
+// This checkout flow is NOT verified for production. Before enabling it, confirm
+// request signing, endpoint paths, amount/currency units, response fields, and
+// webhook/status semantics against the current official OPay merchant docs.
+// Keep OPAY_ENABLED=false until those checks and end-to-end merchant tests pass.
 function opayInitialize($reference, $amountKobo, $email, $callbackUrl) {
     if (!OPAY_ENABLED) return ["status" => false, "message" => "Opay is not enabled"];
     $curl = curl_init();

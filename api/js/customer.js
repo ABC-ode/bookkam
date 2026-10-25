@@ -609,7 +609,7 @@ async function createRideBooking(carId, city) {
 // ── PAYMENT MODAL ─────────────────────────────────────────────────────────────
 async function openPaymentModal(bookingId, total, bookingType) {
   bookingType = bookingType || "website";
-  let methods = { paystack: true, opay: false };
+  let methods = { paystack: false, opay: false };
   try {
     const m = await api("/payments.php?action=get_methods");
     if (!m.error) methods = m;
@@ -633,10 +633,7 @@ async function openPaymentModal(bookingId, total, bookingType) {
       <button class="btn btn-ghost btn-full" onclick="payBooking(${bookingId},'wallet','${bookingType}')">
         <span class="material-icons-outlined">account_balance_wallet</span> Pay from Wallet
       </button>` : ""}
-      <button class="btn btn-ghost btn-full" onclick="payBooking(${bookingId},'paystack','${bookingType}')">
-        <span class="material-icons-outlined">credit_card</span> Pay with Card (Paystack)
-      </button>
-      ${methods.opay ? `
+${methods.opay ? `
       <button class="btn btn-ghost btn-full" onclick="payBooking(${bookingId},'opay','${bookingType}')">
         <span class="material-icons-outlined">credit_card</span> Pay with Opay
       </button>` : ""}

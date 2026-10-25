@@ -6,7 +6,13 @@ apiHeaders();
 $input  = json_decode(file_get_contents("php://input"), true) ?? [];
 $action = $_GET["action"] ?? $input["action"] ?? "";
 $user   = getAuthUser($pdo);
-if ($user && $user["role"] !== "admin") respondError("Admin access required", 403);
+// Default-deny: every action requires a logged-in admin unless it is listed here.
+// Only add an action to this list after confirming its response is safe for anonymous visitors.
+$publicActions = ["get_cities"];
+if (!in_array($action, $publicActions, true)) {
+    if (!$user) respondError("Unauthorised", 401);
+    if ($user["role"] !== "admin") respondError("Admin access required", 403);
+}
 
 switch ($action) {
 
@@ -80,7 +86,8 @@ switch ($action) {
 
     case "get_drivers": {
         $status = $_GET["status"] ?? "";
-        $sql = "SELECT d.*,u.name,u.phone,u.city,u.created_at as joined,
+        // Explicit columns only: bank details stay in get_payouts (where the payout screen needs them).
+        $sql = "SELECT d.id,d.status,u.name,u.phone,u.city,u.created_at as joined,
             (SELECT COUNT(*) FROM cars WHERE driver_id=d.id) as car_count
             FROM drivers d JOIN users u ON d.user_id=u.id";
         $params = [];
@@ -233,7 +240,9 @@ switch ($action) {
     }
 
     case "get_customers": {
-        $s = $pdo->query("SELECT u.*,(SELECT COUNT(*) FROM bookings WHERE customer_id=u.id) as booking_count
+        // Explicit columns only: never return password_hash, otp_*, google_id/apple_id, wallet_balance or email.
+        $s = $pdo->query("SELECT u.id,u.name,u.phone,u.city,u.is_blacklisted,u.created_at,
+            (SELECT COUNT(*) FROM bookings WHERE customer_id=u.id) as booking_count
             FROM users u WHERE u.role='customer' ORDER BY u.created_at DESC");
         respond(["customers"=>$s->fetchAll()]);
     }
@@ -264,7 +273,10 @@ switch ($action) {
     }
 
     case "get_cities": {
-        respond(["cities"=>$pdo->query("SELECT * FROM cities ORDER BY name")->fetchAll()]);
+        // Public action (city selector). Anonymous and customer callers get active cities only, safe columns only.
+        $isAdmin = $user && $user["role"] === "admin";
+        $sql = "SELECT id,name,state,is_active FROM cities" . ($isAdmin ? "" : " WHERE is_active=1") . " ORDER BY name";
+        respond(["cities"=>$pdo->query($sql)->fetchAll()]);
     }
 
     case "add_city": {

@@ -314,14 +314,19 @@ switch ($action) {
         if (!$user) respondError("Unauthorised", 401);
         $bookingId = (int)($_GET["booking_id"] ?? 0);
         if (!$bookingId) respondError("booking_id required");
-        $bs = $pdo->prepare("SELECT b.driver_id FROM bookings b WHERE b.id=? AND b.customer_id=?");
+        // Only the booking's authenticated customer may request location, and only
+        // once the assigned driver has accepted and is actively on the way.
+        $bs = $pdo->prepare("SELECT b.driver_id,b.status,b.car_type FROM bookings b WHERE b.id=? AND b.customer_id=? LIMIT 1");
         $bs->execute([$bookingId,$user["id"]]);
         $booking = $bs->fetch();
         if (!$booking) respondError("Booking not found", 404);
+        if (!$booking["driver_id"] || !in_array($booking["status"], ["accepted","driver_on_way","in_progress","started"], true)) {
+            respond(["location"=>null,"tracking_available"=>false]);
+        }
         $ls = $pdo->prepare("SELECT lat,lng,heading,updated_at FROM driver_locations WHERE driver_id=?");
         $ls->execute([$booking["driver_id"]]);
         $location = $ls->fetch();
-        respond(["location" => $location ?: null]);
+        respond(["location" => $location ?: null,"tracking_available"=>true]);
     }
 
     default: respondError("Invalid action");

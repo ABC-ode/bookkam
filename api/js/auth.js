@@ -23,106 +23,58 @@ function renderAuthLogin() {
   if (countdownTimer) clearInterval(countdownTimer);
 
   document.getElementById("auth-content").innerHTML = `
-    <div class="auth-role-cards">
-
-      <div class="auth-role-card" id="role-card-customer" onclick="expandRole('customer')">
-        <div class="auth-role-icon">
-          <span class="material-icons-outlined">person_outline</span>
-        </div>
-        <div class="auth-role-label">Customer</div>
-        <div class="auth-role-sub">I want to book a car</div>
-      </div>
-
-      <div class="auth-role-card" id="role-card-driver" onclick="expandRole('driver')">
-        <div class="auth-role-icon">
-          <span class="material-icons-outlined">directions_car</span>
-        </div>
-        <div class="auth-role-label">Driver</div>
-        <div class="auth-role-sub">I want to drive</div>
-      </div>
-
-    </div>
-
     <div id="auth-expanded-area"></div>
   `;
-
   expandRole("customer");
 }
 
-// ── Expand a role card ────────────────────────────────────────────────────────
+// The login screen defaults to customer access. Driver access remains available
+// through the small application/login link rather than a prominent role card.
 function expandRole(role) {
   selectedRole = role;
   activeMethod = null;
-
-  // Highlight selected card
-  document.getElementById("role-card-customer").classList.toggle("selected", role === "customer");
-  document.getElementById("role-card-driver").classList.toggle("selected",   role === "driver");
-
   const isCustomer = role === "customer";
+  const area = document.getElementById("auth-expanded-area");
+  if (!area) return;
 
-  document.getElementById("auth-expanded-area").innerHTML = `
+  area.innerHTML = `
     <div class="auth-methods-card" id="auth-methods-card">
-
       <div class="auth-methods-header">
         <span class="material-icons-outlined">${isCustomer ? "person_outline" : "directions_car"}</span>
-        <span>${isCustomer ? "Customer" : "Driver"} Login</span>
-        <button class="auth-collapse-btn" onclick="collapseRole()">
-          <span class="material-icons-outlined">keyboard_arrow_up</span>
-        </button>
+        <span>${isCustomer ? "Welcome to Bookkam" : "Driver Login"}</span>
       </div>
-
-      <div class="auth-method-btns">
-        <button class="auth-method-btn" id="method-btn-phone" onclick="selectMethod('phone')">
-          <span class="material-icons-outlined">smartphone</span>
-          Continue with Phone
-        </button>
-        <button class="auth-method-btn" id="method-btn-email" onclick="selectMethod('email')">
-          <span class="material-icons-outlined">mail_outline</span>
-          Continue with Email
-        </button>
-        <button class="auth-method-btn auth-method-google" id="method-btn-google" onclick="startGoogleLogin()">
-          <svg width="18" height="18" viewBox="0 0 48 48" style="flex-shrink:0">
-            <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.08 17.74 9.5 24 9.5z"/>
-            <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
-            <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
-            <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.35-8.16 2.35-6.26 0-11.57-3.59-13.46-8.83l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
-          </svg>
-          Continue with Google
-        </button>
-        <button class="auth-method-btn auth-method-apple" id="method-btn-apple" onclick="startAppleLogin()">
-          <svg width="18" height="18" viewBox="0 0 814 1000" style="flex-shrink:0;fill:currentColor">
-            <path d="M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 202.2-.6 3.2-20.7 71.9-68.7 141.9-42.8 61.6-87.5 123.1-155.5 123.1s-85.5-39.5-164-39.5c-76 0-103.7 40.8-165.9 40.8s-105-37.5-155.5-127.4C46 790.9 0 694.5 0 601.8c0-156.2 102.9-238.6 204-238.6 52.7 0 96.5 34.5 129.7 34.5 31.8 0 81.5-36.9 143.8-36.9 22.4 0 108.3 2 172.5 79.9zm-248.1-180.8c31.1-36.9 53.1-88.1 53.1-139.3 0-7.1-.6-14.3-1.9-20.1-50.6 1.9-110.8 33.7-147.1 75.8-28.5 32.4-55.1 83.6-55.1 135.5 0 7.8 1.3 15.6 1.9 18.1 3.2.6 8.4 1.3 13.6 1.3 45.4 0 102.5-30.4 135.5-71.3z"/>
-          </svg>
-          Continue with Apple
-        </button>
-
-        ${isCustomer ? `
-        <div class="auth-divider"><span>or</span></div>
-        <button class="auth-method-btn auth-method-guest" onclick="browseAsGuest()">
-          <span class="material-icons-outlined">visibility</span>
-          Browse as Guest
-        </button>
-        ` : ""}
+      <div class="auth-methods-card-body">
+        <div class="auth-method-btns">
+          <button class="auth-method-btn auth-method-google" id="method-btn-google" onclick="startGoogleLogin()">
+            <svg width="18" height="18" viewBox="0 0 48 48" style="flex-shrink:0">
+              <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.08 17.74 9.5 24 9.5z"/>
+              <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+              <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+              <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.35-8.16 2.35-6.26 0-11.57-3.59-13.46-8.83l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+            </svg>
+            Continue with Google
+          </button>
+          <button class="auth-method-btn" id="method-btn-email" onclick="selectMethod('email')">
+            <span class="material-icons-outlined">mail_outline</span>
+            Continue with Email
+          </button>
+          ${isCustomer ? `
+          <div class="auth-divider"><span>or</span></div>
+          <button class="auth-method-btn auth-method-guest" onclick="browseAsGuest()">
+            <span class="material-icons-outlined">visibility</span>
+            Browse as Guest
+          </button>` : ""}
+        </div>
+        <div id="auth-method-form"></div>
+        <div class="auth-driver-link" style="text-align:center;margin-top:16px">
+          ${isCustomer
+            ? '<button class="btn btn-ghost" style="font-size:12px;color:var(--muted)" onclick="expandRole(\'driver\')">Want to be a driver? Apply here</button>'
+            : '<button class="btn btn-ghost" style="font-size:12px;color:var(--muted)" onclick="expandRole(\'customer\')">← Back to customer login</button>'}
+        </div>
       </div>
-
-      <div id="auth-method-form"></div>
-
-      ${isCustomer ? `
-      <div class="auth-driver-link">
-        <button class="btn btn-ghost" style="font-size:12px;color:var(--muted)" onclick="expandRole('driver')">
-          Want to be a driver? →
-        </button>
-      </div>` : `
-      <div class="auth-driver-link">
-        <button class="btn btn-ghost" style="font-size:12px;color:var(--muted)" onclick="expandRole('customer')">
-          ← Back to Customer
-        </button>
-      </div>`}
-
     </div>
   `;
 
-  // Animate in
   requestAnimationFrame(() => {
     const card = document.getElementById("auth-methods-card");
     if (card) card.classList.add("expanded");

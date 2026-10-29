@@ -1123,7 +1123,7 @@ async function loadChatsList(flaggedOnly) {
           ${esc(c.car_name)}
         </div>
         <div style="font-size:12px;color:var(--muted)">Customer: ${esc(c.customer_name)} · Driver: ${esc(c.driver_name||"N/A")}</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:4px">${c.last_message||""}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px">${esc(c.last_message)}</div>
       </div>
       <div style="text-align:right">
         <div style="font-size:11px;color:var(--muted)">${fmtDate(c.last_at)}</div>

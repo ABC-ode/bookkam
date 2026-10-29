@@ -2,7 +2,8 @@
 // (api/fonts/jss/{customer,driver,admin}.js). It extracts the real functions from the source files, runs them with a
 // stubbed DOM / api() and the escape helper from the legacy utils.js, then checks that script/HTML payloads
 // delivered as `message_text` never reach innerHTML as markup while ordinary text survives unchanged.
-// Usage: node tests/functional/legacy_chat_xss.test.js [dir-with-the-js-files]   (default: api/fonts/jss)
+// It covers the chat bubbles (customer/driver/admin) AND the admin chat-list preview (`last_message`).
+// Usage: node tests/functional/legacy_chat_xss.test.js [dir-with-the-js-files]   (default: api/fonts/jss; CI also runs it on api/js)
 const fs = require("fs");
 const path = require("path");
 
@@ -58,10 +59,14 @@ const benign = ["See you at 5pm \u2014 thanks! \uD83D\uDE0A", "Tom & Jerry said 
 const unescape = h => h.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, "\"").replace(/&#39;/g, "'").replace(/&#96;/g, "`").replace(/&amp;/g, "&");
 const mk = t => ({ sender_id: 2, sender_name: "Someone", message_text: t, created_at: "2026-01-01 10:00:00", is_flagged: 0 });
 
+const bubbles = list => ({ messages: list.map(mk) });
 const sites = [
-  { file: "customer.js", fn: "loadChatMessages", id: "chat-messages", args: [] },
-  { file: "driver.js", fn: "loadDriverChatMessages", id: "driver-chat-messages", args: [] },
-  { file: "admin.js", fn: "openAdminChatView", id: "admin-chat-view", args: [7] },
+  { file: "customer.js", fn: "loadChatMessages", id: "chat-messages", args: [], data: bubbles, marker: "chat-bubble" },
+  { file: "driver.js", fn: "loadDriverChatMessages", id: "driver-chat-messages", args: [], data: bubbles, marker: "chat-bubble" },
+  { file: "admin.js", fn: "openAdminChatView", id: "admin-chat-view", args: [7], data: bubbles, marker: "chat-bubble" },
+  // admin chat list: `last_message` is the latest message text shown as a preview
+  { file: "admin.js", fn: "loadChatsList", id: "admin-chats-list", args: [false], marker: "card-hover",
+    data: list => ({ conversations: list.map((t, i) => ({ booking_id: i + 1, car_name: "Car", customer_name: "Cust", driver_name: "Drv", last_message: t, flag_count: 0, last_at: "2026-01-01 10:00:00" })) }) },
 ];
 
 let failures = 0;
@@ -72,8 +77,8 @@ const pass = (m) => console.log("PASS " + m);
   if (typeof esc !== "function") fail("legacy utils.js does not define esc()");
   for (const s of sites) {
     try {
-      const html = await render(s.file, s.fn, s.id, { messages: [...payloads, ...benign].map(mk) }, s.args);
-      if (!html.includes("chat-bubble")) { fail(s.file + ": render produced no chat bubbles (test could not exercise the function)"); continue; }
+      const html = await render(s.file, s.fn, s.id, s.data([...payloads, ...benign]), s.args);
+      if (!html.includes(s.marker)) { fail(s.file + " " + s.fn + ": render produced no output (test could not exercise the function)"); continue; }
       const tags = (html.match(/<\s*(img|script|svg|iframe)\b/gi) || []).length;
       const rawPayload = payloads.filter(p => /[<>"'`]/.test(p) && html.includes(p));
       const escapedOk = typeof esc === "function" && payloads.every(p => html.includes(esc(p)));

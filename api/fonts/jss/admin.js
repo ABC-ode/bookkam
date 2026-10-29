@@ -606,7 +606,7 @@ async function openAdminChatView(bookingId) {
   el.innerHTML = msgs.map(m => `
   <div class="chat-msg-admin ${m.is_flagged?"chat-flagged":""}">
     <div style="font-size:11px;color:var(--muted);margin-bottom:2px">${m.sender_name} · ${fmtTime(m.created_at)}</div>
-    <div class="chat-bubble">${m.message_text} ${m.is_flagged?`<span style="color:var(--fire);font-size:11px">⚠️ Flagged</span>`:""}</div>
+    <div class="chat-bubble">${esc(m.message_text)} ${m.is_flagged?`<span style="color:var(--fire);font-size:11px">⚠️ Flagged</span>`:""}</div>
   </div>`).join("");
   el.scrollTop = el.scrollHeight;
 }

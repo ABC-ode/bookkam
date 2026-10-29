@@ -1,6 +1,7 @@
 <?php
 require_once "../config/db.php";
 require_once "../config/config.php";
+require_once "../config/security.php";
 apiHeaders();
 
 $input  = json_decode(file_get_contents("php://input"), true) ?? [];
@@ -75,9 +76,8 @@ function createUser($pdo, $phone, $email, $role, $name, $city, $passwordHash = n
         VALUES (?,?,?,?,?,0,?,?,?)")
         ->execute([$phone, $email, $name, $role, $city, $passwordHash, $googleId, $appleId]);
     $userId = $pdo->lastInsertId();
-    if ($role === "customer") {
-        $pdo->prepare("UPDATE users SET wallet_balance=1000 WHERE id=?")->execute([$userId]);
-    }
+    // No welcome credit here: accounts start at 0. The credit is granted separately, once, only after the
+    // identity is proven (see grantWelcomeCredit() in config/security.php).
     $s = $pdo->prepare("SELECT * FROM users WHERE id=?");
     $s->execute([$userId]);
     return $s->fetch();
@@ -155,24 +155,61 @@ switch ($action) {
     // ── OTP: verify ───────────────────────────────────────────────────────────
     case "verify_otp": {
         $userId     = (int)($input["user_id"] ?? 0);
-        $otp        = trim($input["otp"] ?? "");
+        $rawOtp     = $input["otp"] ?? "";
+        $otp        = (is_string($rawOtp) || is_int($rawOtp)) ? trim((string)$rawOtp) : "";
         $rememberMe = !empty($input["remember_me"]);
-        if (!$userId || !$otp) respondError("user_id and otp required");
+        if (!$userId || $otp === "") respondError("user_id and otp required");
 
+        // 1. Count this attempt FIRST, atomically, per account and per IP. Because the count is taken before
+        //    anything is compared, N concurrent guesses get N distinct numbers and at most OTP_VERIFY_MAX_FAILS of
+        //    them are ever evaluated. Wrong guesses, resends and unknown user ids can never reset a counter.
+        $ip    = clientIp();
+        $acctN = throttleReserve($pdo, "otp_acct", (string)$userId, OTP_VERIFY_WINDOW);
+        $ipN   = throttleReserve($pdo, "otp_ip", $ip, OTP_VERIFY_IP_WINDOW);
+        if ($acctN === null || $ipN === null) respondError("Service temporarily unavailable. Please try again shortly.", 503); // fail closed
+        if ($acctN > OTP_VERIFY_MAX_FAILS) respondTooManyAttempts(OTP_VERIFY_WINDOW);
+        if ($ipN   > OTP_VERIFY_IP_MAX_FAILS) respondTooManyAttempts(OTP_VERIFY_IP_WINDOW);
+
+        // 2. Evaluate. Unknown user, wrong code, expired code and used code are indistinguishable to the caller.
         $s = $pdo->prepare("SELECT * FROM users WHERE id=?");
         $s->execute([$userId]);
         $verifyUser = $s->fetch();
-        if (!$verifyUser) respondError("User not found", 404);
+        $s->closeCursor();          // release the read lock before the writes below
+        $valid = false;
+        if ($verifyUser) {
+            $valid = TEST_MODE
+                ? hash_equals(TEST_OTP, $otp)
+                : (is_string($verifyUser["otp_code"]) && $verifyUser["otp_code"] !== "" && hash_equals($verifyUser["otp_code"], $otp)
+                   && strtotime((string)$verifyUser["otp_expires_at"]) > time());
+        }
+        if ($valid) {
+            // Single use, atomically: only one of several concurrent requests can consume the code.
+            $consume = $pdo->prepare("UPDATE users SET otp_code=NULL, otp_expires_at=NULL, otp_attempts=0, otp_last_sent=NULL
+                                      WHERE id=? AND (otp_code=? OR ?=1)");
+            $consume->execute([$userId, $otp, TEST_MODE ? 1 : 0]);
+            $valid = $consume->rowCount() === 1;
+        }
+        if (!$valid) {
+            // Limit reached: also destroy the live code so it cannot be guessed after the lock lifts.
+            if ($verifyUser && $acctN >= OTP_VERIFY_MAX_FAILS) {
+                $pdo->prepare("UPDATE users SET otp_code=NULL, otp_expires_at=NULL WHERE id=?")->execute([$userId]);
+            }
+            respondError("Invalid or expired OTP", 401);
+        }
+
+        // 3. Correct code: this account's failures are forgiven and our own reserved IP attempt is returned.
+        throttleRelease($pdo, "otp_acct", (string)$userId);
+        throttleRefund($pdo, "otp_ip", $ip);
+
+        // Only someone who proved possession of the OTP learns the account is suspended.
         if (!empty($verifyUser["is_blacklisted"])) respondError("Your account has been suspended. Contact support.");
 
-        $valid = TEST_MODE
-            ? ($otp === TEST_OTP)
-            : ($verifyUser["otp_code"] === $otp && strtotime($verifyUser["otp_expires_at"]) > time());
-
-        if (!$valid) respondError("Invalid or expired OTP", 401);
-
-        $pdo->prepare("UPDATE users SET otp_code=NULL, otp_expires_at=NULL, otp_attempts=0, otp_last_sent=NULL WHERE id=?")
-            ->execute([$userId]);
+        // Welcome credit: customers only, once per verified phone identity (durable claim, see security.php).
+        if ($verifyUser["role"] === "customer" && canonicalPhone($verifyUser["phone"] ?? "") !== "") {
+            if (grantWelcomeCredit($pdo, (int)$userId, "phone", canonicalPhone($verifyUser["phone"]))) {
+                $verifyUser = reloadUser($pdo, (int)$userId) ?: $verifyUser;
+            }
+        }
 
         respond(buildUserResponse($pdo, $verifyUser, $rememberMe));
     }
@@ -274,6 +311,9 @@ switch ($action) {
             $pdo->prepare("UPDATE users SET photo_url=? WHERE id=?")->execute([$photo, $newUser["id"]]);
             $newUser["photo_url"] = $photo;
         }
+        if ($role === "customer" && grantWelcomeCredit($pdo, (int)$newUser["id"], "google", (string)$googleId)) {
+            $newUser = reloadUser($pdo, (int)$newUser["id"]) ?: $newUser;
+        }
         respond(buildUserResponse($pdo, $newUser, $rememberMe));
     }
 
@@ -352,6 +392,10 @@ switch ($action) {
             respondError("Could not create account", 409);
         }
         if (!empty($tok["photo"])) $pdo->prepare("UPDATE users SET photo_url=? WHERE id=?")->execute([$tok["photo"], $newUser["id"]]);
+        if ($tok["provider"] === "google" && $tok["role"] === "customer"
+            && grantWelcomeCredit($pdo, (int)$newUser["id"], "google", (string)$tok["sub"])) {
+            $newUser = reloadUser($pdo, (int)$newUser["id"]) ?: $newUser;
+        }
         respond(buildUserResponse($pdo, $newUser, $rememberMe));
     }
 

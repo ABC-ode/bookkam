@@ -79,6 +79,16 @@ define("INACTIVITY_TIMEOUT",  3600);
 // OTP rate limiting constants
 define("OTP_MAX_ATTEMPTS",  5);   // max OTPs per window
 define("OTP_WINDOW_SECS",   600); // 10-minute window
+// OTP *verification* brute-force limits (failed guesses). Tunable from .env; defaults are deliberately small.
+define("OTP_VERIFY_MAX_FAILS",    max(1,  (int)env("OTP_VERIFY_MAX_FAILS", "5")));      // guesses per account per window
+define("OTP_VERIFY_WINDOW",       max(60, (int)env("OTP_VERIFY_WINDOW", "900")));       // lockout window (seconds)
+define("OTP_VERIFY_IP_MAX_FAILS", max(1,  (int)env("OTP_VERIFY_IP_MAX_FAILS", "30")));  // guesses per IP per window
+define("OTP_VERIFY_IP_WINDOW",    max(60, (int)env("OTP_VERIFY_IP_WINDOW", "900")));
+// One-time welcome credit for a customer whose phone/Google identity has been verified. Set WELCOME_CREDIT_ENABLED=0 in .env to switch it off.
+// (parsed explicitly: env() treats the string "0" as empty and would fall back to the default)
+$wcFlag = strtolower(trim((string)($_ENV["WELCOME_CREDIT_ENABLED"] ?? getenv("WELCOME_CREDIT_ENABLED"))));
+define("WELCOME_CREDIT_ENABLED", !in_array($wcFlag, ["0", "false", "off", "no", "disabled"], true));
+define("WELCOME_CREDIT_AMOUNT",  1000);
 
 // ── WhatsApp notification helper ──────────────────────────────────────────────
 function sendWhatsApp($to, $message) {

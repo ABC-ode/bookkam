@@ -40,7 +40,7 @@ The endpoint paths, auth header scheme, amount units, response codes (`00000`), 
 | `bookings.php` cancel / cancelled via update_status | + | booking status claim `pending/confirmed → cancelled`, same transaction |
 | `bookings.php` release_deposit | + | `deposit_released` claim, completed bookings only |
 | `admin.php` add_damage_report | + | `deposit_released` claim, same transaction as the report |
-| `auth.php` createUser | + ₦1,000 | **welcome credit, unrestricted per signup (known risk: credit farming; see audit)** |
+| `security.php` grantWelcomeCredit | + ₦1,000 | **welcome credit, once per verified identity** (see "OTP limits and welcome credit" below). `createUser` itself no longer credits anything. |
 
 ## Sign-in and booking hardening (added after the payment work)
 * `set_city` no longer trusts the browser. `google_login`/`apple_login` return a 15-minute signed `pending_token`; `set_city` takes the provider id, e-mail, name, photo and role **from that token only** (role can only be customer/driver, never admin). Before this, an anonymous request could create an admin account and receive a session.
@@ -66,3 +66,10 @@ Take a backup first. Migrations are plain SQL for MySQL (phpMyAdmin or CLI). Non
 
 ## Data needed to finish the failed-payment state
 Run `SHOW CREATE TABLE payments;` on production and share it. It is required to (a) add a `failed`/`refunded` status if the enum allows it, and (b) confirm `booking_id` accepts `0` (used by test top-up audit rows; irrelevant in production where top-ups are off).
+
+
+## OTP limits and welcome credit (migration 008)
+**OTP verification (`auth.php verify_otp`).** Each attempt is counted *before* the code is compared, atomically, per account (`OTP_VERIFY_MAX_FAILS`, default 5 per `OTP_VERIFY_WINDOW`, default 900 s) and per IP (`OTP_VERIFY_IP_MAX_FAILS`, default 30). Past the limit the answer is HTTP 429 even for the correct code; reaching the limit also destroys the live OTP. A correct code forgives that account's failures; wrong guesses, resends and unknown user ids never reset a counter. The code is consumed with a conditional `UPDATE`, so only one of several concurrent requests can use it. Unknown user, wrong, expired and used codes all answer the same 401; the "suspended" message is shown only after a correct code. Counters live in `auth_throttle`; if that table can be neither found nor created the endpoint answers 503 (fails closed). The IP is `REMOTE_ADDR` only (never `X-Forwarded-For`); behind a proxy/CDN every visitor would share one IP bucket until a trusted real-IP header is mapped in `clientIp()`.
+
+**Welcome credit.** The only place that ever granted it was `createUser` (called by phone OTP, e-mail registration, Google, Apple and `set_city`). It is now granted by `grantWelcomeCredit()` only to a **customer whose identity has just been proven**: a phone after OTP verification, or a Google-verified subject id. The claim row (`welcome_credit_claims`) and the wallet credit are written in one transaction; `UNIQUE(user_id)` and `UNIQUE(identity_key)` (sha256 of `phone:<last 10 digits>` or `google:<sub>`) make a second credit impossible for the same account or the same verified identity, however many requests race. Not eligible: e-mail/password signups (the address is never verified), Apple (token not verified, see above), drivers, admins. Migration 008 back-fills every existing customer as already claimed so nobody is credited twice. `WELCOME_CREDIT_ENABLED=0` switches the credit off.
+**Residual risk:** one person with several SIM cards / Google accounts can still claim once per identity. Nothing in the current schema can prove "one human"; if that cost matters, disable the credit or tie it to a first completed paid booking (a business-rule change, not made here).

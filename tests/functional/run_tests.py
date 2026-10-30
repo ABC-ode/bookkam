@@ -114,7 +114,10 @@ def main():
     for t, col, v in [("hourly", "per_hour_price", 5000), ("daily", "per_day_price", 30000)]:
         db("INSERT INTO pricing(city,booking_type,%s) VALUES('Calabar',?,?)" % col, (t, v))
     db("INSERT INTO pricing(city,booking_type,base_price) VALUES('Calabar','chauffeur_trip',15000)")
-    reg = lambda n, e, role: P("auth.php", "register_email", {"name": n, "email": e, "password": "secret123", "confirm": "secret123", "role": role, "city": "Calabar"})[1]
+    def reg(n, e, role):   # e-mail accounts start unverified: register, mark the address verified (the e-mail link is covered by email_auth_tests.py), sign in
+        P("auth.php", "register_email", {"name": n, "email": e, "password": "secret123", "confirm": "secret123", "role": role, "city": "Calabar"})
+        db("UPDATE users SET email_verified_at=datetime('now') WHERE email=?", (e,))
+        return P("auth.php", "login_email", {"email": e, "password": "secret123"})[1]
     c, adm = P("auth.php", "admin_login", {"email": "admin@test.local", "password": "Adm1n-test-only"}); AT = adm.get("token")
     check("admin login works", c == 200 and AT)
     cu = reg("Cust One", "c1@test.local", "customer"); CT = cu["token"]
@@ -334,7 +337,8 @@ def main():
     tok = make_jwt(JWT, uid, "customer").split("."); forged = make_jwt(JWT, db("SELECT id FROM users WHERE role='admin'")[0]["id"], "admin").split(".")
     c, r = P("admin.php", "get_customers", token=".".join([tok[0], forged[1], tok[2]])); check("D: payload swapped under another signature rejected", c == 401, c)
     c, r = P("admin.php", "get_customers", token=make_jwt(JWT, uid, "admin")); check("D: role claim in the token is not trusted (DB role used)", c == 403, c)
-    c, r = P("auth.php", "verify_otp", {"phone": "2348000000000", "otp": "123456"}); check("D: fixed test OTP rejected in production", "error" in r and "token" not in r, r)
+    for a in ("send_otp", "verify_otp", "login"):
+        c, r = P("auth.php", a, {"phone": "2348000000000", "otp": "123456"}); check("D: phone OTP action '%s' no longer exists" % a, c == 400 and "token" not in r and r.get("error") == "Invalid action", (c, r))
     for name, env, expect in [("JWT_SECRET missing", {"APP_ENV": "production"}, 500), ("JWT_SECRET placeholder", {"APP_ENV": "production", "JWT_SECRET": "REPLACE_WITH_A_UNIQUE_RANDOM_SECRET_0123456789"}, 500),
                               ("JWT_SECRET too short", {"APP_ENV": "production", "JWT_SECRET": "short"}, 500), ("APP_ENV unset (fail closed)", {"JWT_SECRET": ""}, 500),
                               ("APP_ENV typo 'prod' (fail closed)", {"APP_ENV": "prod"}, 500), ("APP_ENV 'staging' (fail closed)", {"APP_ENV": "staging"}, 500)]:

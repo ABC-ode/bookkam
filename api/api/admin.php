@@ -1,6 +1,9 @@
 <?php
 require_once "../config/db.php";
 require_once "../config/config.php";
+require_once "../config/security.php";
+require_once "../services/Mailer.php";
+require_once "../services/AccountMail.php";
 apiHeaders();
 
 $input  = json_decode(file_get_contents("php://input"), true) ?? [];
@@ -342,6 +345,27 @@ switch ($action) {
         if ($flaggedOnly) $sql .= " WHERE (SELECT COUNT(*) FROM messages WHERE booking_id=m.booking_id AND is_flagged=1)>0";
         $sql .= " ORDER BY last_at DESC LIMIT 50";
         respond(["conversations"=>$pdo->query($sql)->fetchAll()]);
+    }
+
+    // Admin-assisted recovery: gives a customer/driver who can no longer sign in (e.g. a phone-only account from before
+    // phone OTP was removed) an email address and sends them a single-use "choose a password" link. The admin must have
+    // confirmed the person's identity out of band. The link is only ever e-mailed, never returned in the response.
+    case "issue_account_recovery": {
+        $targetId = (int)($input["user_id"] ?? 0);
+        $email    = normalizeEmail($input["email"] ?? "");
+        if (!$targetId || !$email) respondError("user_id and a valid email are required");
+        $s = $pdo->prepare("SELECT * FROM users WHERE id=?");
+        $s->execute([$targetId]);
+        $target = $s->fetch();
+        if (!$target || $target["role"] === "admin") respondError("User not found", 404);
+        $dup = $pdo->prepare("SELECT id FROM users WHERE LOWER(email)=? AND id<>? LIMIT 1");
+        $dup->execute([$email, $targetId]);
+        if ($dup->fetch()) respondError("That email address belongs to another account", 409);
+        $pdo->prepare("UPDATE users SET email=? WHERE id=?")->execute([$email, $targetId]);
+        $target["email"] = $email;
+        $sent = sendResetEmail($pdo, $target, 24 * 3600);
+        error_log("BOOKKAM admin #" . $user["id"] . " issued account recovery for user #" . $targetId . " (email sent: " . ($sent ? "yes" : "no") . ")");
+        respond(["success" => true, "emailed" => $sent]);
     }
 
     default: respondError("Invalid action");

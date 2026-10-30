@@ -20,7 +20,6 @@ function env(string $key, string $default = ""): string {
 // credits, dev JWT fallback) is enabled ONLY by an explicit allow-listed APP_ENV value.
 // A missing, mistyped or unexpected value (e.g. "prod", "staging") is treated as production.
 define("TEST_MODE", in_array(strtolower(env("APP_ENV", "production")), ["development", "local", "test", "testing"], true));
-define("TEST_OTP",  "123456");
 
 // ── Secrets — loaded from .env ────────────────────────────────────────────────
 // JWT: generate your secret with: php -r "echo bin2hex(random_bytes(32));"
@@ -45,10 +44,8 @@ if (empty($jwtSecret)) {
 }
 define("JWT_SECRET", $jwtSecret);
 define("GOOGLE_CLIENT_ID", env("GOOGLE_CLIENT_ID"));
-// Termii
-define("TERMII_API_KEY",   env("TERMII_API_KEY"));
-define("TERMII_SENDER_ID", env("TERMII_SENDER_ID", "BOOKKAM"));
-
+// Token verification endpoint. Overridable ONLY in test environments (so tests can stub Google); production always uses Google.
+define("GOOGLE_TOKENINFO_URL", (TEST_MODE && env("GOOGLE_TOKENINFO_URL") !== "") ? env("GOOGLE_TOKENINFO_URL") : "https://oauth2.googleapis.com/tokeninfo");
 // OPay remains disabled unless explicitly enabled and the server credentials exist.
 // The checkout integration still requires validation against current official OPay docs;
 // credentials alone do not mean it is production-ready.
@@ -76,18 +73,29 @@ define("UPLOAD_DIR",          dirname(__DIR__) . "/uploads/");
 define("UPLOAD_URL",          "/uploads/");
 define("INACTIVITY_TIMEOUT",  3600);
 
-// OTP rate limiting constants
-define("OTP_MAX_ATTEMPTS",  5);   // max OTPs per window
-define("OTP_WINDOW_SECS",   600); // 10-minute window
-// OTP *verification* brute-force limits (failed guesses). Tunable from .env; defaults are deliberately small.
-define("OTP_VERIFY_MAX_FAILS",    max(1,  (int)env("OTP_VERIFY_MAX_FAILS", "5")));      // guesses per account per window
-define("OTP_VERIFY_WINDOW",       max(60, (int)env("OTP_VERIFY_WINDOW", "900")));       // lockout window (seconds)
-define("OTP_VERIFY_IP_MAX_FAILS", max(1,  (int)env("OTP_VERIFY_IP_MAX_FAILS", "30")));  // guesses per IP per window
-define("OTP_VERIFY_IP_WINDOW",    max(60, (int)env("OTP_VERIFY_IP_WINDOW", "900")));
-// One-time welcome credit for a customer whose phone/Google identity has been verified. Set WELCOME_CREDIT_ENABLED=0 in .env to switch it off.
+// -- E-mail and account security (phone OTP login has been removed) --------------------------
+// Links in e-mails are built from APP_URL (e.g. https://bookkam.com). Without it nothing is sent.
+define("APP_URL", rtrim(env("APP_URL"), "/"));
+define("MAIL_TRANSPORT", strtolower(env("MAIL_TRANSPORT", "mail")));      // smtp | mail | file (file: test environments only)
+define("MAIL_FROM", env("MAIL_FROM"));
+define("MAIL_FROM_NAME", env("MAIL_FROM_NAME", "BOOKKAM"));
+define("MAIL_OUTBOX_DIR", env("MAIL_OUTBOX_DIR"));
+define("SMTP_HOST", env("SMTP_HOST"));
+define("SMTP_PORT", (int)env("SMTP_PORT", "587"));
+define("SMTP_USER", env("SMTP_USER"));
+define("SMTP_PASS", env("SMTP_PASS"));
+define("SMTP_ENCRYPTION", strtolower(env("SMTP_ENCRYPTION", "tls")));      // tls | ssl | none (none: localhost only)
+define("EMAIL_VERIFY_TTL", 86400);          // verification link lifetime: 24 h
+define("PASSWORD_RESET_TTL", 3600);         // reset link lifetime: 1 h
+// Failed-login limits (per account and per IP), fixed window in seconds. Tunable from .env.
+define("LOGIN_MAX_FAILS",    max(1,  (int)env("LOGIN_MAX_FAILS", "8")));
+define("LOGIN_IP_MAX_FAILS", max(1,  (int)env("LOGIN_IP_MAX_FAILS", "40")));
+define("LOGIN_WINDOW",       max(60, (int)env("LOGIN_WINDOW", "900")));
+// One-time welcome credit for a customer whose e-mail (via a single-use link) or Google identity is verified.
+// OFF unless WELCOME_CREDIT_ENABLED=1: an e-mail address costs nothing, so enabling it accepts that farming risk.
 // (parsed explicitly: env() treats the string "0" as empty and would fall back to the default)
 $wcFlag = strtolower(trim((string)($_ENV["WELCOME_CREDIT_ENABLED"] ?? getenv("WELCOME_CREDIT_ENABLED"))));
-define("WELCOME_CREDIT_ENABLED", !in_array($wcFlag, ["0", "false", "off", "no", "disabled"], true));
+define("WELCOME_CREDIT_ENABLED", in_array($wcFlag, ["1", "true", "on", "yes", "enabled"], true));
 define("WELCOME_CREDIT_AMOUNT",  1000);
 
 // ── WhatsApp notification helper ──────────────────────────────────────────────
@@ -160,7 +168,12 @@ function getAuthUser($pdo) {
     if (!$payload || !isset($payload["user_id"]) || isset($payload["typ"])) return null;
     $s = $pdo->prepare("SELECT * FROM users WHERE id=?");
     $s->execute([$payload["user_id"]]);
-    return $s->fetch() ?: null;
+    $u = $s->fetch();
+    if (!$u) return null;
+    // A password reset (or the Google claim of an unconfirmed pre-registration) invalidates every earlier session,
+    // including one issued in the same second as the reset (<=). A sign-in within that same second must be repeated.
+    if (!empty($u["tokens_valid_after"]) && (int)($payload["iat"] ?? 0) <= strtotime((string)$u["tokens_valid_after"])) return null;
+    return $u;
 }
 
 function respond($data, $code = 200)     { http_response_code($code); echo json_encode($data); exit; }

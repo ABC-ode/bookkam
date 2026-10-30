@@ -1,5 +1,5 @@
 <?php
-// Shared security helpers for auth.php: brute-force throttling and the one-time welcome credit.
+// Shared security helpers for auth.php: attempt throttling, single-use e-mail tokens and the one-time welcome credit.
 // Requires config.php (respondError, constants). Statements are portable across MySQL/MariaDB and the
 // SQLite stand-in used by tests/functional; all timestamps come from PHP so every node agrees.
 
@@ -91,21 +91,92 @@ function respondTooManyAttempts(int $retryAfter): void {
     respondError("Too many attempts. Please try again later.", 429);
 }
 
-// -- Welcome credit ---------------------------------------------------------------------
-// Phones are compared by their last 10 digits so +234 80..., 234 80... and 080... are the same identity.
-function canonicalPhone($phone): string {
-    $d = preg_replace('/\D/', '', (string)$phone) ?? "";
-    return strlen($d) > 10 ? substr($d, -10) : $d;
+// -- Attempt guard (login, admin login) ---------------------------------------------------
+// Reserve one attempt per account AND per IP before anything is compared (same atomic counter as above).
+// Responds 429/503 itself when the limits are exceeded; otherwise returns the keys needed by forgiveAttempt().
+function guardAttempt(PDO $pdo, string $bucket, string $accountKey, int $max, int $window, int $ipMax): array {
+    $ip = clientIp();
+    $a  = throttleReserve($pdo, $bucket . "_acct", $accountKey, $window);
+    $i  = throttleReserve($pdo, $bucket . "_ip", $ip, $window);
+    if ($a === null || $i === null) respondError("Service temporarily unavailable. Please try again shortly.", 503);   // fail closed
+    if ($a > $max || $i > $ipMax) respondTooManyAttempts($window);
+    return [$bucket, $accountKey, $ip];
+}
+// After a SUCCESSFUL check: the account's failures are forgiven and the IP gets its reserved attempt back.
+function forgiveAttempt(PDO $pdo, array $guard): void {
+    [$bucket, $accountKey, $ip] = $guard;
+    throttleRelease($pdo, $bucket . "_acct", $accountKey);
+    throttleRefund($pdo, $bucket . "_ip", $ip);
+}
+// Count an attempt that may never be forgiven (registration / reset-request / resend floods). Responds 429 when over.
+function countOnly(PDO $pdo, string $bucket, string $key, int $max, int $window): void {
+    $n = throttleReserve($pdo, $bucket, $key, $window);
+    if ($n === null) respondError("Service temporarily unavailable. Please try again shortly.", 503);
+    if ($n > $max) respondTooManyAttempts($window);
 }
 
-// Grants the one-time welcome credit to a customer whose identity has just been PROVEN (OTP possession for a
-// phone, a Google-verified subject id). The durable claim row and the wallet credit commit in ONE transaction;
-// UNIQUE(user_id) and UNIQUE(identity_key) make a second claim for the same account, or for the same verified
-// identity on another account, fail no matter how many requests race. Returns true only when credit was added.
-// Fails closed: a missing table (migration not applied) or any error means NO credit.
+// -- Input normalisation ------------------------------------------------------------------
+function normalizeEmail($v): string {
+    $e = strtolower(trim((string)$v));
+    return (strlen($e) <= 190 && filter_var($e, FILTER_VALIDATE_EMAIL)) ? $e : "";
+}
+// Identity key for e-mail: lower-case, "+tag" removed, and dots removed for gmail.com/googlemail.com, so the
+// trivial aliases of one inbox collapse to one identity. (Different inboxes still count as different people.)
+function canonicalEmail(string $e): string {
+    [$local, $domain] = array_pad(explode("@", strtolower($e), 2), 2, "");
+    $local = explode("+", $local, 2)[0];
+    if ($domain === "googlemail.com") $domain = "gmail.com";
+    if ($domain === "gmail.com") $local = str_replace(".", "", $local);
+    return $local . "@" . $domain;
+}
+// Plain text for names/cities: tags and control characters removed, whitespace collapsed, length-capped.
+function cleanText($v, int $max): string {
+    $t = preg_replace('/[\x00-\x1F\x7F]+/u', " ", strip_tags((string)$v)) ?? "";
+    $t = trim(preg_replace('/\s+/u', " ", $t) ?? "");
+    return function_exists("mb_substr") ? mb_substr($t, 0, $max) : substr($t, 0, $max);
+}
+// bcrypt silently ignores everything after 72 bytes, so longer passwords are refused instead of truncated.
+function passwordProblem(string $pw, string $email = ""): ?string {
+    if (strlen($pw) < 8)  return "Password must be at least 8 characters";
+    if (strlen($pw) > 72) return "Password must be at most 72 characters";
+    if ($email !== "" && strtolower($pw) === strtolower($email)) return "Password must not be your email address";
+    return null;
+}
+
+// -- Single-use e-mail tokens (verify e-mail / reset password) ------------------------------
+// Only the SHA-256 of a token is stored. The raw 256-bit token exists in the e-mail and nowhere else.
+function issueAuthToken(PDO $pdo, int $userId, string $purpose, int $ttlSeconds): string {
+    $raw  = bin2hex(random_bytes(32));
+    $now  = date("Y-m-d H:i:s");
+    $pdo->prepare("UPDATE auth_tokens SET used_at=? WHERE user_id=? AND purpose=? AND used_at IS NULL")->execute([$now, $userId, $purpose]); // supersede older links
+    $pdo->prepare("INSERT INTO auth_tokens (user_id,purpose,token_hash,expires_at,created_at) VALUES (?,?,?,?,?)")
+        ->execute([$userId, $purpose, hash("sha256", $raw), date("Y-m-d H:i:s", time() + $ttlSeconds), $now]);
+    return $raw;
+}
+// Atomic: of any number of concurrent requests carrying the same token, exactly one gets the user id back.
+function consumeAuthToken(PDO $pdo, string $raw, string $purpose): ?int {
+    if (!preg_match('/^[a-f0-9]{64}$/', $raw)) return null;
+    $h = hash("sha256", $raw); $now = date("Y-m-d H:i:s");
+    $u = $pdo->prepare("UPDATE auth_tokens SET used_at=? WHERE token_hash=? AND purpose=? AND used_at IS NULL AND expires_at > ?");
+    $u->execute([$now, $h, $purpose, $now]);
+    if ($u->rowCount() !== 1) return null;
+    $s = $pdo->prepare("SELECT user_id FROM auth_tokens WHERE token_hash=?");
+    $s->execute([$h]);
+    $id = $s->fetchColumn();
+    return $id === false ? null : (int)$id;
+}
+
+// -- Welcome credit ---------------------------------------------------------------------
+// Grants the one-time welcome credit to a CUSTOMER whose identity has just been proven: an e-mail address (the
+// owner clicked a single-use link sent to it) or a Google-verified subject id. The durable claim row and the wallet
+// credit commit in ONE transaction; UNIQUE(user_id) and UNIQUE(identity_key) make a second credit impossible for the
+// same account, or for the same identity on another account, however many requests race. Returns true only when credit
+// was added. Fails closed: a missing table (migration not applied) or any error means NO credit.
+// NOTE: an e-mail address is cheap to create. Keep WELCOME_CREDIT_ENABLED off unless that cost is acceptable.
 function grantWelcomeCredit(PDO $pdo, int $userId, string $identityType, string $identityValue): bool {
     if (!WELCOME_CREDIT_ENABLED || WELCOME_CREDIT_AMOUNT <= 0 || $userId <= 0 || $identityValue === "") return false;
-    if (!in_array($identityType, ["phone", "google"], true)) return false;      // apple/email are unverified: not eligible
+    if ($identityType === "email") $identityValue = canonicalEmail($identityValue);
+    elseif ($identityType !== "google") return false;                      // apple (token not verified) is not eligible
     $key = hash("sha256", $identityType . ":" . $identityValue);
     $own = !$pdo->inTransaction();
     try {
@@ -121,7 +192,7 @@ function grantWelcomeCredit(PDO $pdo, int $userId, string $identityType, string 
     } catch (Throwable $e) {
         if ($own && $pdo->inTransaction()) { try { $pdo->rollBack(); } catch (Throwable $x) {} }
         if (!($e instanceof PDOException) || (string)$e->getCode() !== "23000") {
-            error_log("BOOKKAM welcome credit not granted (apply migrations/008_otp_throttle_and_welcome_claims.sql?): " . $e->getMessage());
+            error_log("BOOKKAM welcome credit not granted (apply migrations 008/009?): " . $e->getMessage());
         }
         return false;                                  // duplicate claim (23000) or storage problem: never credit
     }

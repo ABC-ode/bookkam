@@ -6,9 +6,8 @@ const APPLE_SERVICE_ID  = "YOUR_APPLE_SERVICE_ID";
 const APPLE_REDIRECT    = "https://bookkam.com/api/auth.php?action=apple_callback";
 
 let selectedRole    = null; // "customer" | "driver"
-let otpUserId       = null;
 let countdownTimer  = null;
-let activeMethod    = null; // "phone" | "email" | "google" | "apple"
+let activeMethod    = null; // "email" | "google" | "apple"
 let pendingSocial   = null; // holds {google_id/apple_id, email, name, photo, role} while city picker shown
 
 // ── Cities list ───────────────────────────────────────────────────────────────
@@ -17,7 +16,6 @@ const CITIES = ["Calabar","Ikom","Obudu","Ogoja","Uyo","Port Harcourt","Abuja","
 // ── Main render ───────────────────────────────────────────────────────────────
 function renderAuthLogin() {
   selectedRole   = "customer";
-  otpUserId      = null;
   activeMethod   = null;
   pendingSocial  = null;
   if (countdownTimer) clearInterval(countdownTimer);
@@ -72,10 +70,6 @@ function expandRole(role) {
       </div>
 
       <div class="auth-method-btns">
-        <button class="auth-method-btn" id="method-btn-phone" onclick="selectMethod('phone')">
-          <span class="material-icons-outlined">smartphone</span>
-          Continue with Phone
-        </button>
         <button class="auth-method-btn" id="method-btn-email" onclick="selectMethod('email')">
           <span class="material-icons-outlined">mail_outline</span>
           Continue with Email
@@ -146,59 +140,7 @@ function selectMethod(method) {
   const btn = document.getElementById("method-btn-" + method);
   if (btn) btn.classList.add("active");
 
-  if (method === "phone") renderPhoneForm();
   if (method === "email") renderEmailForm("login");
-}
-
-// ── Phone OTP form ────────────────────────────────────────────────────────────
-function renderPhoneForm() {
-  document.getElementById("auth-method-form").innerHTML = `
-    <div class="auth-form-slide">
-      <div class="input-group">
-        <label>Phone Number</label>
-        <div class="phone-input-wrap">
-          <span class="phone-prefix">+234</span>
-          <input class="input-field phone-input" id="login-phone" type="tel"
-            placeholder="8012345678" inputmode="numeric" maxlength="11"
-            onkeypress="if(event.key==='Enter') sendOTP()">
-        </div>
-      </div>
-      <label class="auth-remember-label">
-        <input type="checkbox" id="phone-remember"> Remember me for 7 days
-      </label>
-      <button class="btn btn-gold btn-full" onclick="sendOTP()">
-        <span class="material-icons-outlined">arrow_forward</span> Send OTP
-      </button>
-      <button class="btn btn-ghost btn-full auth-close-btn" onclick="closeMethodForm()">
-        <span class="material-icons-outlined">close</span> Close
-      </button>
-    </div>
-  `;
-  setTimeout(() => document.getElementById("login-phone")?.focus(), 100);
-}
-
-function renderOTPForm() {
-  document.getElementById("auth-method-form").innerHTML = `
-    <div class="auth-form-slide">
-      <p class="auth-otp-hint">Enter the 6-digit code sent to your number</p>
-      <div class="otp-boxes" id="otp-boxes">
-        ${Array(6).fill('<input class="otp-box" type="tel" maxlength="1" inputmode="numeric">').join("")}
-      </div>
-      <p id="otp-error" class="auth-otp-error"></p>
-      <button class="btn btn-gold btn-full" style="margin-top:12px" onclick="verifyOTP()">
-        <span class="material-icons-outlined">check_circle</span> Verify
-      </button>
-      <div class="auth-otp-resend">
-        <span id="otp-countdown" style="color:var(--muted);font-size:12px"></span>
-        <button id="resend-btn" class="btn btn-ghost" style="display:none;font-size:12px" onclick="sendOTP(true)">Resend OTP</button>
-      </div>
-      <button class="btn btn-ghost btn-full" style="margin-top:8px" onclick="renderPhoneForm()">
-        <span class="material-icons-outlined">arrow_back</span> Back
-      </button>
-    </div>
-  `;
-  initOTPBoxes();
-  setTimeout(() => document.querySelector(".otp-box")?.focus(), 100);
 }
 
 // ── Email form ────────────────────────────────────────────────────────────────
@@ -235,6 +177,7 @@ function renderEmailForm(tab = "login") {
         <button class="btn btn-gold btn-full" onclick="submitEmailLogin()">
           <span class="material-icons-outlined">login</span> Login
         </button>
+        <button class="btn btn-ghost btn-full" onclick="renderForgotForm()">Forgot password?</button>
       ` : `
         <div class="input-group">
           <label>Full Name</label>
@@ -247,7 +190,7 @@ function renderEmailForm(tab = "login") {
         <div class="input-group">
           <label>Password</label>
           <div class="password-wrap">
-            <input type="password" id="reg-pass" class="input-field" placeholder="Min 6 characters">
+            <input type="password" id="reg-pass" class="input-field" placeholder="At least 8 characters">
             <button class="password-toggle" onclick="togglePassword('reg-pass')">
               <span class="material-icons-outlined">visibility</span>
             </button>
@@ -316,78 +259,6 @@ function togglePassword(id) {
   if (btn) btn.textContent = input.type === "password" ? "visibility" : "visibility_off";
 }
 
-// ── OTP boxes ─────────────────────────────────────────────────────────────────
-function initOTPBoxes() {
-  const boxes = [...document.querySelectorAll(".otp-box")];
-  boxes.forEach((box, i) => {
-    box.addEventListener("input", e => {
-      if (e.target.value) { if (i < 5) boxes[i + 1].focus(); }
-      if (boxes.every(b => b.value)) verifyOTP();
-    });
-    box.addEventListener("keydown", e => {
-      if (e.key === "Backspace" && !e.target.value && i > 0) boxes[i - 1].focus();
-    });
-    box.addEventListener("paste", e => {
-      const text = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
-      text.split("").forEach((c, j) => { if (boxes[j]) boxes[j].value = c; });
-      boxes[Math.min(text.length, 5)].focus();
-      e.preventDefault();
-    });
-  });
-}
-
-// ── Send OTP ──────────────────────────────────────────────────────────────────
-async function sendOTP(resend = false) {
-  let phone = document.getElementById("login-phone")?.value?.trim();
-  if (!phone || phone.length < 10) { showToast("Enter a valid phone number", "error"); return; }
-
-  // Normalise: strip leading 0 so we don't double the country code in the DB.
-  // User types: 08012345678 → we store: 2348012345678
-  if (phone.startsWith("0")) phone = phone.slice(1);
-  const fullPhone = "234" + phone;
-
-  const data = await api("/auth.php?action=send_otp", "POST", { phone: fullPhone, role: selectedRole });
-  if (data.error) { showToast(data.error, "error"); return; }
-
-  otpUserId = data.user_id;
-  renderOTPForm();
-  showToast(resend ? "New OTP sent!" : "OTP sent!", "success");
-
-  // Countdown
-  let secs = 60;
-  const countdown = document.getElementById("otp-countdown");
-  const resendBtn = document.getElementById("resend-btn");
-  if (countdownTimer) clearInterval(countdownTimer);
-  if (resendBtn) resendBtn.style.display = "none";
-  countdownTimer = setInterval(() => {
-    secs--;
-    if (countdown) countdown.textContent = `Resend in ${secs}s`;
-    if (secs <= 0) {
-      clearInterval(countdownTimer);
-      if (countdown) countdown.textContent = "";
-      if (resendBtn) resendBtn.style.display = "inline-block";
-    }
-  }, 1000);
-}
-
-// ── Verify OTP ────────────────────────────────────────────────────────────────
-async function verifyOTP() {
-  const boxes      = [...document.querySelectorAll(".otp-box")];
-  const otp        = boxes.map(b => b.value).join("");
-  const rememberMe = !!document.getElementById("phone-remember")?.checked;
-  if (otp.length < 6) { showToast("Enter all 6 digits", "error"); return; }
-
-  const data = await api("/auth.php?action=verify_otp", "POST", { user_id: otpUserId, otp, remember_me: rememberMe });
-  if (data.error) {
-    boxes.forEach(b => b.classList.add("shake"));
-    setTimeout(() => boxes.forEach(b => b.classList.remove("shake")), 400);
-    document.getElementById("otp-error").textContent = data.error;
-    return;
-  }
-
-  handleAuthSuccess(data);
-}
-
 // ── Email login ───────────────────────────────────────────────────────────────
 async function submitEmailLogin() {
   const email      = document.getElementById("email-login-email")?.value?.trim();
@@ -397,6 +268,7 @@ async function submitEmailLogin() {
   if (!email || !password) { showToast("Enter email and password", "error"); return; }
 
   const data = await api("/auth.php?action=login_email", "POST", { email, password, remember_me: rememberMe });
+  if (data.code === "email_unverified") { renderEmailSent(email, true); return; }
   if (data.error) { showToast(data.error, "error"); return; }
 
   handleAuthSuccess(data);
@@ -413,6 +285,7 @@ async function submitEmailRegister() {
   if (!name)            { showToast("Enter your full name", "error"); return; }
   if (!email)           { showToast("Enter your email", "error"); return; }
   if (!pass)            { showToast("Enter a password", "error"); return; }
+  if (pass.length < 8)  { showToast("Password must be at least 8 characters", "error"); return; }
   if (pass !== confirm) { showToast("Passwords do not match", "error"); return; }
 
   const data = await api("/auth.php?action=register_email", "POST", {
@@ -420,7 +293,108 @@ async function submitEmailRegister() {
   });
   if (data.error) { showToast(data.error, "error"); return; }
 
-  handleAuthSuccess(data);
+  renderEmailSent(email, false);   // the account only works after the e-mailed link has been opened
+}
+
+// -- E-mail confirmation / password reset screens -------------------------------
+// Links in e-mails look like  https://site/#verify_email=<64 hex>  or  #reset_password=<64 hex>. The token lives in the
+// URL FRAGMENT so it is never sent to the server, written to logs or leaked in a Referer header; it is removed from the
+// address bar as soon as it has been read.
+function authForm(html) {
+  const box = document.getElementById("auth-method-form");
+  if (box) box.innerHTML = `<div class="auth-form-slide">${html}</div>`;
+}
+
+function renderEmailSent(email, wasUnverified) {
+  const e = esc(email);
+  authForm(`
+    <p style="margin:0 0 12px">${wasUnverified
+      ? "Your email address is not confirmed yet."
+      : "Almost done! We sent a confirmation link to"}
+      <strong>${e}</strong>.</p>
+    <p style="margin:0 0 16px;opacity:.8">Open the link in that email to activate your account, then sign in.
+      Check your spam folder if you cannot find it. The link works once and expires in 24 hours.</p>
+    <button class="btn btn-gold btn-full" onclick="resendVerification(this.dataset.email)" data-email="${e}">
+      <span class="material-icons-outlined">forward_to_inbox</span> Send the link again
+    </button>
+    <button class="btn btn-ghost btn-full" onclick="renderEmailForm('login')">Back to login</button>`);
+}
+
+async function resendVerification(email) {
+  const data = await api("/auth.php?action=resend_verification", "POST", { email });
+  showToast(data.error || data.message || "If that address can be used, we sent an email.", data.error ? "error" : "success");
+}
+
+function renderForgotForm() {
+  authForm(`
+    <p style="margin:0 0 12px">Enter your account email and we will send you a link to choose a new password.</p>
+    <div class="input-group"><label>Email</label>
+      <input type="email" id="forgot-email" class="input-field" placeholder="you@example.com"
+        onkeypress="if(event.key==='Enter') submitForgot()"></div>
+    <button class="btn btn-gold btn-full" onclick="submitForgot()">
+      <span class="material-icons-outlined">mail</span> Send reset link</button>
+    <button class="btn btn-ghost btn-full" onclick="renderEmailForm('login')">Back to login</button>`);
+  setTimeout(() => document.getElementById("forgot-email")?.focus(), 100);
+}
+
+async function submitForgot() {
+  const email = document.getElementById("forgot-email")?.value?.trim();
+  if (!email) { showToast("Enter your email", "error"); return; }
+  const data = await api("/auth.php?action=forgot_password", "POST", { email });
+  if (data.error) { showToast(data.error, "error"); return; }
+  authForm(`
+    <p style="margin:0 0 12px">If an account exists for <strong>${esc(email)}</strong>, a reset link is on its way.
+      It works once and expires in 1 hour.</p>
+    <button class="btn btn-ghost btn-full" onclick="renderEmailForm('login')">Back to login</button>`);
+}
+
+function renderResetForm(token) {
+  authForm(`
+    <p style="margin:0 0 12px">Choose a new password (8 to 72 characters).</p>
+    <div class="input-group"><label>New password</label>
+      <div class="password-wrap"><input type="password" id="reset-pass" class="input-field" autocomplete="new-password">
+        <button class="password-toggle" onclick="togglePassword('reset-pass')"><span class="material-icons-outlined">visibility</span></button></div></div>
+    <div class="input-group"><label>Confirm password</label>
+      <div class="password-wrap"><input type="password" id="reset-confirm" class="input-field" autocomplete="new-password"
+        onkeypress="if(event.key==='Enter') submitReset()">
+        <button class="password-toggle" onclick="togglePassword('reset-confirm')"><span class="material-icons-outlined">visibility</span></button></div></div>
+    <button class="btn btn-gold btn-full" onclick="submitReset()"><span class="material-icons-outlined">lock_reset</span> Save new password</button>`);
+  window._resetToken = token;      // kept in memory only; never written to storage or the URL
+}
+
+async function submitReset() {
+  const password = document.getElementById("reset-pass")?.value || "";
+  const confirm  = document.getElementById("reset-confirm")?.value || "";
+  if (password.length < 8)  { showToast("Password must be at least 8 characters", "error"); return; }
+  if (password !== confirm) { showToast("Passwords do not match", "error"); return; }
+  const data = await api("/auth.php?action=reset_password", "POST", { token: window._resetToken, password, confirm });
+  if (data.error) { showToast(data.error, "error"); return; }
+  window._resetToken = null;
+  showToast("Password updated. Please sign in.", "success");
+  renderEmailForm("login");
+}
+
+async function verifyEmailToken(token) {
+  authForm(`<p style="margin:0">Confirming your email address...</p>`);
+  const data = await api("/auth.php?action=verify_email", "POST", { token });
+  if (data.error) {
+    authForm(`<p style="margin:0 0 12px">${esc(data.error)}</p>
+      <button class="btn btn-ghost btn-full" onclick="renderEmailForm('login')">Back to login</button>`);
+    return;
+  }
+  showToast("Email confirmed. You can now sign in.", "success");
+  renderEmailForm("login");
+}
+
+// Called once on page load (app.js). Returns true when the page was opened from an e-mailed link.
+function handleAuthFragment() {
+  const m = /^#(verify_email|reset_password)=([a-f0-9]{64})$/.exec(location.hash || "");
+  if (!m) return false;
+  history.replaceState(null, "", location.pathname + location.search);
+  showPage("page-auth");
+  renderAuthLogin();
+  if (m[1] === "verify_email") verifyEmailToken(m[2]); else renderResetForm(m[2]);
+  return true;
 }
 
 // ── Google login ──────────────────────────────────────────────────────────────

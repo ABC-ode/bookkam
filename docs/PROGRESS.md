@@ -30,6 +30,7 @@ Tests: `python3 tests/functional/run_tests.py` (SQLite stand-in), `python3 tests
   passed at commit fda58fd, BEFORE the newer backend work: rerun them. The MySQL runner does not yet apply migration 010.
 
 ## To do, in this order
+(Batch 1 = item 1 is DONE, see "Batch log" at the end.)
 1. Frontend fixes
    - Hide Event: `index.php` `renderHomeBookingCards` falls back to the built-in card when the API returns an empty list. Use `Array.isArray(data.cards)`.
    - Remove the Apple button (`method-btn-apple` in `js/auth.js`). The server already answers 503 in production.
@@ -69,3 +70,9 @@ The current adapter is wrong: it sends the SECRET key as Bearer on every call an
 - Put OPay sandbox keys in the server `.env` yourself and complete one real sandbox payment before enabling OPay.
 - CI wiring needs a token with the `workflow` scope (or apply the patch by hand on GitHub).
 - Revoke the old GitHub token; use a new fine-grained one limited to this repo.
+
+## Batch log
+- Batch 1 (frontend) DONE: Hide Event honours an empty list; Apple button and Apple JS tag removed (server still answers 503); Driver role card removed, driver sign-in unchanged (role-agnostic), "I want to drive with BOOKKAM" checkbox on the Register tab sends role=driver (Google sign-up always creates a customer); admin sidebar `.open` + topbar toggle + backdrop + ESC + <900px drawer; `toggle_city` added to admin.php; sw.js CACHE_NAME bookkam-v7; `?v=` bumped on css/js tags and in the SW asset list. NOT browser-tested (no browser in the sandbox).
+
+## Blockers
+- The agent sandbox has no GitHub credentials, so `git push` fails ("could not read Username"). Commits exist only in the sandbox; they are delivered as a git bundle / patch series. Owner: apply with `git am` or `git pull <bundle> feat/email-auth-opay`, then push. No credentials are to be pasted into chat.

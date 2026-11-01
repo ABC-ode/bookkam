@@ -299,8 +299,8 @@ switch ($action) {
         if (!$user) respondError("Unauthorised", 401);
         $name=$input["name"]??""; $state=$input["state"]??"";
         if (!$name||!$state) respondError("name and state required");
-        $pdo->prepare("INSERT INTO cities (name,state,is_active) VALUES (?,?,1)")->execute([$name,$state]);
-        respond(["success"=>true,"id"=>$reportId]);
+        $pdo->prepare("INSERT INTO cities (name,state,is_active) VALUES (?,?,1)")->execute([cleanText($name,80),cleanText($state,80)]);
+        respond(["success"=>true,"id"=>(int)$pdo->lastInsertId()]);
     }
 
     case "update_pricing": {
@@ -366,6 +366,21 @@ switch ($action) {
         $sent = sendResetEmail($pdo, $target, 24 * 3600);
         error_log("BOOKKAM admin #" . $user["id"] . " issued account recovery for user #" . $targetId . " (email sent: " . ($sent ? "yes" : "no") . ")");
         respond(["success" => true, "emailed" => $sent]);
+    }
+
+    // ON/OFF switches. Admin-only (the default-deny gate above); an admin can always reach these to turn things back on.
+    case "get_app_settings": {
+        respond(["bookings_enabled" => appSettingOn($pdo, "bookings_enabled"), "payments_enabled" => appSettingOn($pdo, "payments_enabled"),
+                 "mapbox_enabled" => MAPBOX_ENABLED]);
+    }
+    case "set_app_setting": {
+        $key = (string)($input["key"] ?? "");
+        if (!in_array($key, APP_SETTING_KEYS, true)) respondError("Unknown setting");
+        if (!array_key_exists("enabled", $input) || !is_bool($input["enabled"])) respondError("enabled must be true or false");
+        try { setAppSetting($pdo, $key, $input["enabled"], (int)$user["id"]); }
+        catch (Throwable $e) { error_log("BOOKKAM set_app_setting failed (apply migrations/010): " . $e->getMessage()); respondError("Could not save the setting. Has migration 010 been applied?", 500); }
+        error_log("BOOKKAM admin #" . $user["id"] . " set " . $key . " = " . ($input["enabled"] ? "ON" : "OFF"));
+        respond(["success" => true, "key" => $key, "enabled" => $input["enabled"]]);
     }
 
     default: respondError("Invalid action");

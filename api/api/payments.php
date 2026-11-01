@@ -158,11 +158,13 @@ switch ($action) {
     case "get_methods": {
         respond([
             "opay"     => OPAY_ENABLED,
+            "payments_enabled" => appSettingOn($pdo, "payments_enabled") && appSettingOn($pdo, "bookings_enabled"),
             "wallet_top_up" => TEST_MODE, "test_mode" => TEST_MODE, // production top-up needs a verified provider flow (not built)
         ]);
     }
 
     case "initiate": {
+        requirePaymentsOpen($pdo);          // admin switches: starting a payment only; verify / webhook / refunds stay available
         $bookingId   = (int)($input["booking_id"] ?? 0);
         $bookingType = ($input["booking_type"] ?? "website") === "event" ? "event" : "website";
         $method      = $input["method"] ?? "cash";
@@ -289,6 +291,7 @@ switch ($action) {
 
     case "top_up_wallet": {
         if (!$user) respondError("Unauthorised", 401);
+        requirePaymentsOpen($pdo);
         // No verified provider-backed top-up exists, so production never credits a wallet
         // from this endpoint, whatever the client sends.
         if (!TEST_MODE) respondError("Wallet top-ups are temporarily unavailable. Please contact support.", 503);

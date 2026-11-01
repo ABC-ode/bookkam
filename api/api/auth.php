@@ -4,6 +4,7 @@ require_once "../config/config.php";
 require_once "../config/security.php";
 require_once "../services/Mailer.php";
 require_once "../services/AccountMail.php";
+require_once "../services/Totp.php";
 apiHeaders();
 
 $input  = json_decode(file_get_contents("php://input"), true) ?? [];
@@ -89,6 +90,19 @@ function createUser($pdo, $phone, $email, $role, $name, $city, $passwordHash = n
 const TIMING_HASH = '$2y$12$Wp8EqEPFx4ddEgMiFzxev.8pWtEKBx48DTsmTSmGYlRCdy/vt5wbS';
 function genericAccountReply(): void {
     respond(["success" => true, "message" => "If that address can be used, we have sent an email to it. Check your inbox (and spam folder)."]);
+}
+
+// ── Admin session / second-factor helpers ─────────────────────────────────
+function adminSessionReply(array $adm): void {
+    respond(["token" => generateJWTExpiry($adm["id"], "admin", 24 * 3600),
+             "user"  => ["id" => $adm["id"], "name" => $adm["name"], "email" => $adm["email"], "role" => "admin"]]);
+}
+// The admin being enrolled: a signed-in admin session, or (only when 2FA is required) the setup challenge issued after a correct password.
+function adminForTwoFactor(PDO $pdo, $user, array $input): array {
+    if ($user && $user["role"] === "admin") return $user;
+    $aid = Totp::readChallenge((string)($input["challenge"] ?? ""), "setup");
+    if ($aid) { $s = $pdo->prepare("SELECT * FROM users WHERE id=? AND role='admin'"); $s->execute([$aid]); if ($r = $s->fetch()) return $r; }
+    respondError("Unauthorised", 401);
 }
 
 switch ($action) {
@@ -398,12 +412,92 @@ switch ($action) {
         if (!(password_verify($password, $hash ?: TIMING_HASH) && $adminUser && $hash)) {
             respondError("Invalid credentials", 401);
         }
+        // Second factor. The password step alone never yields a session for an enrolled admin.
+        $enrolled = array_key_exists("admin_totp_enabled", $adminUser) && (int)$adminUser["admin_totp_enabled"] === 1;
+        if ($enrolled || ADMIN_2FA_REQUIRED) {
+            // Give back the attempt this correct password reserved: only wrong passwords and wrong codes count towards the lockout.
+            throttleRefund($pdo, $guard[0] . "_acct", $guard[1]); throttleRefund($pdo, $guard[0] . "_ip", $guard[2]);
+            if ($enrolled) respond(["two_factor_required" => true, "challenge" => Totp::challenge((int)$adminUser["id"], "login2fa")]);
+            respond(["needs_2fa_setup" => true, "challenge" => Totp::challenge((int)$adminUser["id"], "setup", 600)]);
+        }
         forgiveAttempt($pdo, $guard);
-        $token = generateJWTExpiry($adminUser["id"], "admin", 24 * 3600);
-        respond([
-            "token" => $token,
-            "user"  => ["id" => $adminUser["id"], "name" => $adminUser["name"], "email" => $adminUser["email"], "role" => "admin"]
-        ]);
+        adminSessionReply($adminUser);
+    }
+
+    // ── Admin second factor: sign-in step 2 (authenticator code or one-time recovery code) ──────────────────
+    case "admin_login_2fa": {
+        $aid = Totp::readChallenge((string)($input["challenge"] ?? ""), "login2fa");
+        if (!$aid) respondError("Sign-in expired. Please start again.", 401);
+        $s = $pdo->prepare("SELECT * FROM users WHERE id=? AND role='admin'"); $s->execute([$aid]); $adm = $s->fetch();
+        if (!$adm || (int)($adm["admin_totp_enabled"] ?? 0) !== 1) respondError("Sign-in expired. Please start again.", 401);
+        $guard = guardAttempt($pdo, "adminlogin", hash("sha256", normalizeEmail($adm["email"])), 5, LOGIN_WINDOW, 20);   // same lockout as the password step
+        $code = is_string($input["code"] ?? null) ? $input["code"] : "";
+        $rec  = is_string($input["recovery_code"] ?? null) ? trim($input["recovery_code"]) : "";
+        $ok = false;
+        if ($code !== "") {
+            $secret = Totp::open($adm["admin_totp_secret"]);
+            $step = $secret ? Totp::verify($secret, $code, isset($adm["admin_totp_last_step"]) ? (int)$adm["admin_totp_last_step"] : null) : null;
+            if ($step !== null) {      // atomic: a code (step) can be accepted once
+                $c = $pdo->prepare("UPDATE users SET admin_totp_last_step=? WHERE id=? AND (admin_totp_last_step IS NULL OR admin_totp_last_step < ?)");
+                $c->execute([$step, $aid, $step]); $ok = $c->rowCount() === 1;
+            }
+        } elseif ($rec !== "") {
+            $hashes = json_decode((string)($adm["admin_recovery_hashes"] ?? "[]"), true) ?: [];
+            $h = Totp::hashCode($rec);
+            if (in_array($h, $hashes, true)) {   // compare-and-swap so one recovery code works exactly once
+                $left = array_values(array_diff($hashes, [$h]));
+                $c = $pdo->prepare("UPDATE users SET admin_recovery_hashes=? WHERE id=? AND admin_recovery_hashes=?");
+                $c->execute([json_encode($left), $aid, $adm["admin_recovery_hashes"]]); $ok = $c->rowCount() === 1;
+                if ($ok) error_log("BOOKKAM admin #" . $aid . " signed in with a recovery code (" . count($left) . " left)");
+            }
+        }
+        if (!$ok) respondError("Invalid code", 401);
+        forgiveAttempt($pdo, $guard);
+        adminSessionReply($adm);
+    }
+
+    // ── Admin second factor: enrolment. Needs an admin session, or the setup challenge from sign-in when 2FA is required ──
+    case "admin_2fa_begin": {
+        $adm = adminForTwoFactor($pdo, $user, $input);
+        countOnly($pdo, "tok_ip", clientIp(), 30, 900);
+        if ((int)($adm["admin_totp_enabled"] ?? 0) === 1) respondError("Two-factor authentication is already on", 409);
+        $secret = Totp::generateSecret();
+        $pdo->prepare("UPDATE users SET admin_totp_secret=?, admin_totp_enabled=0 WHERE id=?")->execute([Totp::seal($secret), $adm["id"]]);
+        respond(["secret" => $secret, "otpauth_uri" => Totp::uri($secret, $adm["email"])]);
+    }
+    case "admin_2fa_enable": {
+        $adm = adminForTwoFactor($pdo, $user, $input);
+        $g = guardAttempt($pdo, "admin2fa_setup", (string)$adm["id"], 5, LOGIN_WINDOW, 30);
+        if ((int)($adm["admin_totp_enabled"] ?? 0) === 1) respondError("Two-factor authentication is already on", 409);
+        $secret = Totp::open($adm["admin_totp_secret"] ?? null);
+        $step = $secret ? Totp::verify($secret, (string)($input["code"] ?? ""), null) : null;
+        if ($step === null) respondError("That code is not correct. Check the time on your phone and try again.", 400);
+        $codes = Totp::newRecoveryCodes();
+        $e = $pdo->prepare("UPDATE users SET admin_totp_enabled=1, admin_totp_last_step=?, admin_recovery_hashes=? WHERE id=? AND admin_totp_enabled=0");
+        $e->execute([$step, json_encode(array_map([Totp::class, "hashCode"], $codes)), $adm["id"]]);
+        if ($e->rowCount() !== 1) respondError("Two-factor authentication is already on", 409);
+        forgiveAttempt($pdo, $g);
+        error_log("BOOKKAM admin #" . $adm["id"] . " enabled two-factor authentication");
+        $out = ["success" => true, "recovery_codes" => $codes];    // shown ONCE; only their hashes are stored
+        if (!$user) { $out["token"] = generateJWTExpiry($adm["id"], "admin", 24 * 3600); $out["user"] = ["id" => $adm["id"], "name" => $adm["name"], "email" => $adm["email"], "role" => "admin"]; }
+        respond($out);
+    }
+    case "admin_2fa_disable": {
+        if (!$user || $user["role"] !== "admin") respondError("Unauthorised", 401);
+        $g = guardAttempt($pdo, "admin2fa_off", (string)$user["id"], 5, LOGIN_WINDOW, 30);
+        $pw = is_string($input["password"] ?? null) ? $input["password"] : "";
+        if (!$pw || !password_verify($pw, (string)($user["password_hash"] ?? ""))) respondError("Incorrect password", 401);
+        $secret = Totp::open($user["admin_totp_secret"] ?? null);
+        if (!$secret || Totp::verify($secret, (string)($input["code"] ?? ""), isset($user["admin_totp_last_step"]) ? (int)$user["admin_totp_last_step"] : null) === null) respondError("Incorrect code", 401);
+        $pdo->prepare("UPDATE users SET admin_totp_enabled=0, admin_totp_secret=NULL, admin_recovery_hashes=NULL, admin_totp_last_step=NULL WHERE id=?")->execute([$user["id"]]);
+        forgiveAttempt($pdo, $g);
+        error_log("BOOKKAM admin #" . $user["id"] . " disabled two-factor authentication");
+        respond(["success" => true]);
+    }
+    case "admin_2fa_status": {
+        if (!$user || $user["role"] !== "admin") respondError("Unauthorised", 401);
+        $left = json_decode((string)($user["admin_recovery_hashes"] ?? "[]"), true) ?: [];
+        respond(["enabled" => (int)($user["admin_totp_enabled"] ?? 0) === 1, "required" => ADMIN_2FA_REQUIRED, "recovery_codes_left" => count($left)]);
     }
 
     // ── Update profile ────────────────────────────────────────────────────────

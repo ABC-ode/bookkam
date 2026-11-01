@@ -308,7 +308,7 @@ def main():
     check("B: payment_status only ever 'paid' or 'unpaid' in tests", {r_["payment_status"] for r_ in db("SELECT DISTINCT payment_status FROM bookings")} <= {"paid", "unpaid", None})
 
     # ================= C. WALLET =================
-    c, r = P("payments.php", "get_methods"); check("C: production reports test mode/top-up off, OPay off", r == {"opay": False, "wallet_top_up": False, "test_mode": False}, r)
+    c, r = P("payments.php", "get_methods"); check("C: production reports test mode/top-up off, OPay off", r == {"opay": False, "wallet_top_up": False, "test_mode": False, "payments_enabled": True}, r)
     before = wallet("c1@test.local"); rows = db("SELECT COUNT(*) n FROM payments")[0]["n"]
     for body in ({"amount": 5000}, {"amount": 5000, "method": "test"}, {"amount": 1, "idempotency_key": "abcdefgh1234"}, {"amount": -5}):
         c, r = P("payments.php", "top_up_wallet", body, CT)

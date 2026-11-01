@@ -91,6 +91,16 @@ define("PASSWORD_RESET_TTL", 3600);         // reset link lifetime: 1 h
 define("LOGIN_MAX_FAILS",    max(1,  (int)env("LOGIN_MAX_FAILS", "8")));
 define("LOGIN_IP_MAX_FAILS", max(1,  (int)env("LOGIN_IP_MAX_FAILS", "40")));
 define("LOGIN_WINDOW",       max(60, (int)env("LOGIN_WINDOW", "900")));
+// Admin second factor. When ADMIN_2FA_REQUIRED=1 an admin who has NOT enrolled an authenticator cannot sign in with a
+// password alone: they are walked through enrolment first. Leave it 0 until every admin has enrolled (see docs/admin-2fa.md).
+// An admin who HAS enrolled always needs the second factor, whatever this flag says.
+$a2 = strtolower(trim((string)($_ENV["ADMIN_2FA_REQUIRED"] ?? getenv("ADMIN_2FA_REQUIRED"))));
+define("ADMIN_2FA_REQUIRED", in_array($a2, ["1", "true", "on", "yes"], true));
+// Mapbox stays OFF until MAPBOX_ENABLED=1. Only a PUBLIC token (pk.*) is ever sent to browsers; secret (sk.*) tokens are refused.
+$mb = strtolower(trim((string)($_ENV["MAPBOX_ENABLED"] ?? getenv("MAPBOX_ENABLED"))));
+$mbTok = trim((string)env("MAPBOX_PUBLIC_TOKEN"));
+define("MAPBOX_ENABLED", in_array($mb, ["1", "true", "on", "yes"], true) && str_starts_with($mbTok, "pk."));
+define("MAPBOX_PUBLIC_TOKEN", MAPBOX_ENABLED ? $mbTok : "");
 // One-time welcome credit for a customer whose e-mail (via a single-use link) or Google identity is verified.
 // OFF unless WELCOME_CREDIT_ENABLED=1: an e-mail address costs nothing, so enabling it accepts that farming risk.
 // (parsed explicitly: env() treats the string "0" as empty and would fall back to the default)
@@ -170,6 +180,7 @@ function getAuthUser($pdo) {
     $s->execute([$payload["user_id"]]);
     $u = $s->fetch();
     if (!$u) return null;
+    if (!empty($u["is_blacklisted"]) && ($u["role"] ?? "") !== "admin") return null;   // suspended: existing sessions stop working too
     // A password reset (or the Google claim of an unconfirmed pre-registration) invalidates every earlier session,
     // including one issued in the same second as the reset (<=). A sign-in within that same second must be repeated.
     if (!empty($u["tokens_valid_after"]) && (int)($payload["iat"] ?? 0) <= strtotime((string)$u["tokens_valid_after"])) return null;
@@ -186,4 +197,7 @@ function apiHeaders() {
     header("Access-Control-Allow-Headers: Content-Type, Authorization");
     if ($_SERVER["REQUEST_METHOD"] === "OPTIONS") { http_response_code(200); exit; }
 }
+
+require_once __DIR__ . "/settings.php";
+require_once __DIR__ . "/security.php";      // shared helpers (cleanText, normalizeEmail, throttling) for every endpoint
 ?>

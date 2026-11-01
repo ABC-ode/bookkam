@@ -44,6 +44,7 @@ switch ($action) {
 
     case "create": {
         if (!$user) respondError("Unauthorised", 401);
+        requireBookingsOpen($pdo);          // admin switch: no NEW bookings while off (existing trips are unaffected)
         $carId    = (int)($input["car_id"]           ?? 0);
         $type     = $input["booking_type"]            ?? ""; // hourly|daily|trip
         $pickup   = $input["pickup_address"]          ?? "";
@@ -62,14 +63,29 @@ switch ($action) {
         // would otherwise create a negative or free booking).
         if (!is_finite($duration) || $duration < 0.5 || $duration > 168) respondError("duration_hours must be between 0.5 and 168", 422);
         if ($days < 1 || $days > 60) respondError("duration_days must be between 1 and 60", 422);
-        $pickupCoords  = is_string($pickupCoords)  ? mb_substr($pickupCoords, 0, 100)  : null;
-        $dropoffCoords = is_string($dropoffCoords) ? mb_substr($dropoffCoords, 0, 100) : null;
+        // A coordinate pair is stored only if it is a real "lat,lng" inside the valid ranges; anything else is refused
+        // (null is fine: typing an address without picking a point on a map is allowed).
+        $coordOk = function ($c) {
+            if ($c === null || $c === "") return true;
+            if (!is_string($c) || !preg_match('/^(-?\d{1,2}(?:\.\d{1,10})?),\s*(-?\d{1,3}(?:\.\d{1,10})?)$/', trim($c), $m)) return false;
+            return abs((float)$m[1]) <= 90 && abs((float)$m[2]) <= 180;
+        };
+        if (!$coordOk($pickupCoords) || !$coordOk($dropoffCoords)) respondError("Invalid pickup or drop-off location");
+        $pickupCoords  = ($pickupCoords  === "" || $pickupCoords  === null) ? null : preg_replace('/\s+/', '', trim($pickupCoords));
+        $dropoffCoords = ($dropoffCoords === "" || $dropoffCoords === null) ? null : preg_replace('/\s+/', '', trim($dropoffCoords));
+        $pickup  = cleanText($pickup, 255);
+        $dropoff = cleanText($dropoff, 255);
 
         // Get car
         $cs = $pdo->prepare("SELECT c.*, d.id as did, d.status as driver_status, d.is_online as driver_online FROM cars c LEFT JOIN drivers d ON c.driver_id=d.id WHERE c.id=?");
         $cs->execute([$carId]);
         $car = $cs->fetch();
         if (!$car) respondError("Car not found");
+        // The service city is the car's own city. A client-supplied (or location-detected) city must match it, so the price
+        // list used can never be chosen by the customer.
+        if (!empty($car["city"]) && strcasecmp(trim((string)$car["city"]), trim($city)) !== 0) {
+            respondError("This car operates in " . cleanText($car["city"], 60) . ". Choose that city to book it.", 422);
+        }
 
         // Check availability
         if ($car["car_type"] === "self_drive") {
@@ -314,10 +330,15 @@ switch ($action) {
         if (!$user) respondError("Unauthorised", 401);
         $bookingId = (int)($_GET["booking_id"] ?? 0);
         if (!$bookingId) respondError("booking_id required");
-        $bs = $pdo->prepare("SELECT b.driver_id FROM bookings b WHERE b.id=? AND b.customer_id=?");
+        $bs = $pdo->prepare("SELECT b.driver_id, b.status FROM bookings b WHERE b.id=? AND b.customer_id=?");
         $bs->execute([$bookingId,$user["id"]]);
         $booking = $bs->fetch();
         if (!$booking) respondError("Booking not found", 404);
+        // Privacy: the driver's live position is shared only for the customer's own trip while it is confirmed or in
+        // progress (this codebase's statuses: pending -> confirmed -> active -> completed | cancelled). Never after it ends.
+        if (!in_array($booking["status"], ["confirmed", "active"], true) || empty($booking["driver_id"])) {
+            respondError("Driver location is only available while your trip is confirmed or in progress", 403);
+        }
         $ls = $pdo->prepare("SELECT lat,lng,heading,updated_at FROM driver_locations WHERE driver_id=?");
         $ls->execute([$booking["driver_id"]]);
         $location = $ls->fetch();

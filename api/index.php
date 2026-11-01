@@ -51,9 +51,9 @@ $adminPortal = $adminPortalKey !== '' && isset($_GET['bkp']) && hash_equals($adm
   <!-- Fonts & Icons -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;600&family=Space+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/material-icons-outlined.css">
+  <link rel="stylesheet" href="/css/material-icons-outlined.css?v=1">
   <link href="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=4">
+  <link rel="stylesheet" href="/css/style.css?v=5">
   <script>window.ADMIN_PORTAL = <?= $adminPortal ? 'true' : 'false' ?>;</script>
   </head>
 <body>
@@ -734,7 +734,7 @@ $adminPortal = $adminPortalKey !== '' && isset($_GET['bkp']) && hash_equals($adm
 
     fetch('/api/booking-cards.php?action=get_active')
       .then(function (r) { return r.json(); })
-      .then(function (data) { draw((data && data.cards && data.cards.length) ? data.cards : FALLBACK_HOME_BOOKING_CARDS); })
+      .then(function (data) { draw((data && Array.isArray(data.cards)) ? data.cards : FALLBACK_HOME_BOOKING_CARDS); })
       .catch(function () { draw(FALLBACK_HOME_BOOKING_CARDS); });
   }
 
@@ -1564,6 +1564,7 @@ $adminPortal = $adminPortalKey !== '' && isset($_GET['bkp']) && hash_equals($adm
 <div id="page-admin-dashboard" class="page" style="display:none">
   <div class="dashboard-layout">
     <aside class="sidebar" id="admin-sidebar"></aside>
+    <div class="sidebar-backdrop" id="admin-sidebar-backdrop" onclick="closeAdminSidebar()"></div>
     <main class="main-content">
       <div class="topbar" id="admin-topbar"></div>
       <div class="tab-body">
@@ -1596,14 +1597,13 @@ $adminPortal = $adminPortalKey !== '' && isset($_GET['bkp']) && hash_equals($adm
 <!-- Scripts -->
 <script src="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
-<script src="https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js" async defer></script>
-<script src="/js/utils.js?v=6"></script>
-<script src="/js/app.js?v=6"></script>
-<script src="/js/maps.js?v=6"></script>
-<script src="/js/auth.js?v=6"></script>
-<script src="/js/customer.js?v=6"></script>
-<script src="/js/driver.js?v=6"></script>
-<script src="/js/admin.js?v=8"></script>
+<script src="/js/utils.js?v=7"></script>
+<script src="/js/app.js?v=7"></script>
+<script src="/js/maps.js?v=7"></script>
+<script src="/js/auth.js?v=7"></script>
+<script src="/js/customer.js?v=7"></script>
+<script src="/js/driver.js?v=7"></script>
+<script src="/js/admin.js?v=9"></script>
 <script>
   // Register service worker for PWA
   if ('serviceWorker' in navigator) {

@@ -27,7 +27,7 @@ function sandbox(hash) {
     loadDriverDashboard: () => {},
   };
   const names = Object.keys(env);
-  const api = new Function(...names, read("auth.js") + "\n;return {handleAuthFragment, renderEmailSent, renderResetForm, submitReset, submitEmailRegister, submitEmailLogin, renderAuthLogin, expandRole, typeofs: {sendOTP: typeof sendOTP, verifyOTP: typeof verifyOTP, renderPhoneForm: typeof renderPhoneForm}, getUser: () => currentUser};")(...names.map(n => env[n]));
+  const api = new Function(...names, read("auth.js") + "\n;return {handleAuthFragment, renderEmailSent, renderResetForm, submitReset, submitEmailRegister, submitEmailLogin, renderAuthLogin, renderAuthMethods, typeofs: {sendOTP: typeof sendOTP, verifyOTP: typeof verifyOTP, renderPhoneForm: typeof renderPhoneForm}, getUser: () => currentUser};")(...names.map(n => env[n]));
   return { api, els, calls, toasts, store, urlChanges, apiMock, env };
 }
 const tick = () => new Promise(r => setImmediate(r));

@@ -11,6 +11,7 @@ function adminEscapeHTML(value) {
 }
 
 function loadAdminDashboard() {
+  setAdminSidebar(false);
   renderAdminSidebar();
   renderAdminTopbar();
   showTab("tab-admin-dashboard");
@@ -39,8 +40,26 @@ function renderAdminSidebar() {
   </ul>`;
 }
 
+// Sidebar open/close: hover expands it on desktop, the topbar button (and .open) pins it open on every screen size,
+// and under 900px it becomes a drawer with a backdrop. ESC, the backdrop and picking a tab close it.
+function setAdminSidebar(open) {
+  const sb  = document.getElementById("admin-sidebar");
+  const bd  = document.getElementById("admin-sidebar-backdrop");
+  const btn = document.getElementById("admin-menu-btn");
+  if (sb) sb.classList.toggle("open", !!open);
+  if (bd) bd.classList.toggle("show", !!open);
+  if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
+}
+function toggleAdminSidebar() {
+  const sb = document.getElementById("admin-sidebar");
+  setAdminSidebar(!(sb && sb.classList.contains("open")));
+}
+function closeAdminSidebar() { setAdminSidebar(false); }
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeAdminSidebar(); });
+
 function renderAdminTopbar() {
   document.getElementById("admin-topbar").innerHTML = `
+  <button class="topbar-menu-btn" id="admin-menu-btn" type="button" aria-label="Open or close the menu" aria-controls="admin-sidebar" aria-expanded="false" onclick="toggleAdminSidebar()"><span class="material-icons-outlined">menu</span></button>
   <div class="topbar-greeting">Admin Panel — <span>${greet()}</span></div>
   <div class="topbar-actions">
     <div class="topbar-notif" onclick="toggleNotifications(event)">
@@ -52,6 +71,7 @@ function renderAdminTopbar() {
 }
 
 function adminTab(name, el) {
+  if (window.matchMedia && window.matchMedia("(max-width: 900px)").matches) closeAdminSidebar();
   document.querySelectorAll(".sidebar-nav a").forEach(a => a.classList.remove("active"));
   if (el) el.classList.add("active");
   showTab("tab-admin-" + name);

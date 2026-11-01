@@ -1,72 +1,39 @@
 // ── AUTH.JS ───────────────────────────────────────────────────────────────────
 // Google Client ID — replace with your actual client ID
 const GOOGLE_CLIENT_ID = "506985141783-svn9ilskpk1et5sr6tedv7vkg2vlio53.apps.googleusercontent.com";
-// Apple Service ID — replace with your actual service ID
-const APPLE_SERVICE_ID  = "YOUR_APPLE_SERVICE_ID";
-const APPLE_REDIRECT    = "https://bookkam.com/api/auth.php?action=apple_callback";
 
-let selectedRole    = null; // "customer" | "driver"
 let countdownTimer  = null;
-let activeMethod    = null; // "email" | "google" | "apple"
-let pendingSocial   = null; // holds {google_id/apple_id, email, name, photo, role} while city picker shown
+let activeMethod    = null; // "email" | "google"
+let pendingSocial   = null; // holds {pending_token, email, name, photo, role} while the city picker is shown
 
 // ── Cities list ───────────────────────────────────────────────────────────────
 const CITIES = ["Calabar","Ikom","Obudu","Ogoja","Uyo","Port Harcourt","Abuja","Lagos"];
 
 // ── Main render ───────────────────────────────────────────────────────────────
+// One sign-in screen for everybody. Sign-in is role-agnostic (the server answers with the account's own role and
+// handleAuthSuccess routes to the right dashboard), so drivers sign in here too. People who want to drive tick
+// "I want to drive with BOOKKAM" on the Register tab.
 function renderAuthLogin() {
-  selectedRole   = "customer";
   activeMethod   = null;
   pendingSocial  = null;
   if (countdownTimer) clearInterval(countdownTimer);
 
   document.getElementById("auth-content").innerHTML = `
-    <div class="auth-role-cards">
-
-      <div class="auth-role-card" id="role-card-customer" onclick="expandRole('customer')">
-        <div class="auth-role-icon">
-          <span class="material-icons-outlined">person_outline</span>
-        </div>
-        <div class="auth-role-label">Customer</div>
-        <div class="auth-role-sub">I want to book a car</div>
-      </div>
-
-      <div class="auth-role-card" id="role-card-driver" onclick="expandRole('driver')">
-        <div class="auth-role-icon">
-          <span class="material-icons-outlined">directions_car</span>
-        </div>
-        <div class="auth-role-label">Driver</div>
-        <div class="auth-role-sub">I want to drive</div>
-      </div>
-
-    </div>
-
     <div id="auth-expanded-area"></div>
   `;
 
-  expandRole("customer");
+  renderAuthMethods();
 }
 
-// ── Expand a role card ────────────────────────────────────────────────────────
-function expandRole(role) {
-  selectedRole = role;
+function renderAuthMethods() {
   activeMethod = null;
-
-  // Highlight selected card
-  document.getElementById("role-card-customer").classList.toggle("selected", role === "customer");
-  document.getElementById("role-card-driver").classList.toggle("selected",   role === "driver");
-
-  const isCustomer = role === "customer";
 
   document.getElementById("auth-expanded-area").innerHTML = `
     <div class="auth-methods-card" id="auth-methods-card">
 
       <div class="auth-methods-header">
-        <span class="material-icons-outlined">${isCustomer ? "person_outline" : "directions_car"}</span>
-        <span>${isCustomer ? "Customer" : "Driver"} Login</span>
-        <button class="auth-collapse-btn" onclick="collapseRole()">
-          <span class="material-icons-outlined">keyboard_arrow_up</span>
-        </button>
+        <span class="material-icons-outlined">person_outline</span>
+        <span>Sign in or create an account</span>
       </div>
 
       <div class="auth-method-btns">
@@ -83,35 +50,15 @@ function expandRole(role) {
           </svg>
           Continue with Google
         </button>
-        <button class="auth-method-btn auth-method-apple" id="method-btn-apple" onclick="startAppleLogin()">
-          <svg width="18" height="18" viewBox="0 0 814 1000" style="flex-shrink:0;fill:currentColor">
-            <path d="M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 202.2-.6 3.2-20.7 71.9-68.7 141.9-42.8 61.6-87.5 123.1-155.5 123.1s-85.5-39.5-164-39.5c-76 0-103.7 40.8-165.9 40.8s-105-37.5-155.5-127.4C46 790.9 0 694.5 0 601.8c0-156.2 102.9-238.6 204-238.6 52.7 0 96.5 34.5 129.7 34.5 31.8 0 81.5-36.9 143.8-36.9 22.4 0 108.3 2 172.5 79.9zm-248.1-180.8c31.1-36.9 53.1-88.1 53.1-139.3 0-7.1-.6-14.3-1.9-20.1-50.6 1.9-110.8 33.7-147.1 75.8-28.5 32.4-55.1 83.6-55.1 135.5 0 7.8 1.3 15.6 1.9 18.1 3.2.6 8.4 1.3 13.6 1.3 45.4 0 102.5-30.4 135.5-71.3z"/>
-          </svg>
-          Continue with Apple
-        </button>
 
-        ${isCustomer ? `
         <div class="auth-divider"><span>or</span></div>
         <button class="auth-method-btn auth-method-guest" onclick="browseAsGuest()">
           <span class="material-icons-outlined">visibility</span>
           Browse as Guest
         </button>
-        ` : ""}
       </div>
 
       <div id="auth-method-form"></div>
-
-      ${isCustomer ? `
-      <div class="auth-driver-link">
-        <button class="btn btn-ghost" style="font-size:12px;color:var(--muted)" onclick="expandRole('driver')">
-          Want to be a driver? →
-        </button>
-      </div>` : `
-      <div class="auth-driver-link">
-        <button class="btn btn-ghost" style="font-size:12px;color:var(--muted)" onclick="expandRole('customer')">
-          ← Back to Customer
-        </button>
-      </div>`}
 
     </div>
   `;
@@ -121,14 +68,6 @@ function expandRole(role) {
     const card = document.getElementById("auth-methods-card");
     if (card) card.classList.add("expanded");
   });
-}
-
-function collapseRole() {
-  selectedRole = null;
-  activeMethod = null;
-  document.getElementById("role-card-customer").classList.remove("selected");
-  document.getElementById("role-card-driver").classList.remove("selected");
-  document.getElementById("auth-expanded-area").innerHTML = "";
 }
 
 // ── Select login method ───────────────────────────────────────────────────────
@@ -211,6 +150,9 @@ function renderEmailForm(tab = "login") {
             ${CITIES.map(c => `<option value="${c}">${c}</option>`).join("")}
           </select>
         </div>
+        <label class="auth-remember-label">
+          <input type="checkbox" id="reg-drive"> I want to drive with BOOKKAM
+        </label>
         <button class="btn btn-gold btn-full" onclick="submitEmailRegister()">
           <span class="material-icons-outlined">person_add</span> Create Account
         </button>
@@ -224,7 +166,7 @@ function renderEmailForm(tab = "login") {
   setTimeout(() => document.querySelector(".auth-form-slide input")?.focus(), 100);
 }
 
-// ── City picker (after Google/Apple first login) ───────────────────────────────
+// ── City picker (after Google first login) ───────────────────────────────
 function renderCityPicker(displayName) {
   document.getElementById("auth-method-form").innerHTML = `
     <div class="auth-form-slide auth-city-picker">
@@ -281,6 +223,7 @@ async function submitEmailRegister() {
   const pass    = document.getElementById("reg-pass")?.value;
   const confirm = document.getElementById("reg-confirm")?.value;
   const city    = document.getElementById("reg-city")?.value;
+  const role    = document.getElementById("reg-drive")?.checked ? "driver" : "customer";
 
   if (!name)            { showToast("Enter your full name", "error"); return; }
   if (!email)           { showToast("Enter your email", "error"); return; }
@@ -289,7 +232,7 @@ async function submitEmailRegister() {
   if (pass !== confirm) { showToast("Passwords do not match", "error"); return; }
 
   const data = await api("/auth.php?action=register_email", "POST", {
-    name, email, password: pass, confirm, role: selectedRole, city
+    name, email, password: pass, confirm, role, city
   });
   if (data.error) { showToast(data.error, "error"); return; }
 
@@ -418,7 +361,7 @@ function startGoogleLogin() {
 async function handleGoogleCallback(response) {
   const data = await api("/auth.php?action=google_login", "POST", {
     id_token: response.credential,
-    role: selectedRole,
+    role: "customer",
     remember_me: true,
   });
 
@@ -433,46 +376,6 @@ async function handleGoogleCallback(response) {
   handleAuthSuccess(data);
 }
 
-// ── Apple login ───────────────────────────────────────────────────────────────
-function startAppleLogin() {
-  if (!window.AppleID) { showToast("Apple Sign-In not loaded", "error"); return; }
-  AppleID.auth.init({
-    clientId:    APPLE_SERVICE_ID,
-    scope:       "name email",
-    redirectURI: APPLE_REDIRECT,
-    usePopup:    true,
-  });
-  AppleID.auth.signIn().then(handleAppleCallback).catch(err => {
-    if (err.error !== "popup_closed_by_user") showToast("Apple Sign-In failed", "error");
-  });
-}
-
-async function handleAppleCallback(response) {
-  const idToken = response.authorization?.id_token ?? "";
-  const email   = response.user?.email ?? "";
-  const name    = response.user?.name
-    ? ((response.user.name.firstName || "") + " " + (response.user.name.lastName || "")).trim()
-    : "";
-
-  const data = await api("/auth.php?action=apple_login", "POST", {
-    id_token: idToken,
-    role: selectedRole,
-    email,
-    name,
-    remember_me: true,
-  });
-
-  if (data.error) { showToast(data.error, "error"); return; }
-
-  if (data.needs_city) {
-    pendingSocial = { type: "apple", ...data };
-    renderCityPicker(data.name);
-    return;
-  }
-
-  handleAuthSuccess(data);
-}
-
 // ── City picker submit ────────────────────────────────────────────────────────
 async function submitCityPicker() {
   const city = document.getElementById("social-city")?.value;
@@ -480,7 +383,7 @@ async function submitCityPicker() {
 
   const payload = {
     city,
-    role:       pendingSocial.role || selectedRole,
+    role:       pendingSocial.role || "customer",
     email:      pendingSocial.email || "",
     name:       pendingSocial.name  || "",
     photo:      pendingSocial.photo || null,

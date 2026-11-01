@@ -303,6 +303,18 @@ switch ($action) {
         respond(["success"=>true,"id"=>(int)$pdo->lastInsertId()]);
     }
 
+    case "toggle_city": {
+        // Admin only (default-deny guard above). Flips cities.is_active; the admin UI shows Enable/Disable from the result.
+        $cityId = (int)($input["city_id"] ?? 0);
+        if ($cityId <= 0) respondError("city_id required");
+        $s = $pdo->prepare("SELECT is_active FROM cities WHERE id=?"); $s->execute([$cityId]);
+        $row = $s->fetch();
+        if (!$row) respondError("City not found", 404);
+        $newState = ((int)$row["is_active"]) ? 0 : 1;
+        $pdo->prepare("UPDATE cities SET is_active=? WHERE id=?")->execute([$newState, $cityId]);
+        respond(["success"=>true, "id"=>$cityId, "is_active"=>$newState]);
+    }
+
     case "update_pricing": {
         if (!$user) respondError("Unauthorised", 401);
         $id=$input["id"]??0;

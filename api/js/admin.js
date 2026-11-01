@@ -36,6 +36,7 @@ function renderAdminSidebar() {
     <li><a onclick="adminTab('promos',this)"><span class="material-icons-outlined">local_offer</span><span class="nav-label">Promos</span></a></li>
     <li><a onclick="adminTab('cities',this)"><span class="material-icons-outlined">location_city</span><span class="nav-label">Cities</span></a></li>
     <li><a onclick="adminTab('booking-card',this)"><span class="material-icons-outlined">view_carousel</span><span class="nav-label">Booking Card</span></a></li>
+    <li><a onclick="adminTab('settings',this)"><span class="material-icons-outlined">tune</span><span class="nav-label">Settings</span></a></li>
     <li style="margin-top:auto"><a onclick="logout()"><span class="material-icons-outlined">logout</span><span class="nav-label">Logout</span></a></li>
   </ul>`;
 }
@@ -90,6 +91,7 @@ function adminTab(name, el) {
     promos:    loadAdminPromos,
     cities:    loadAdminCities,
     "booking-card": loadAdminBookingCard,
+    settings:  loadAdminSettings,
   };
   if (handlers[name]) handlers[name]();
 }
@@ -1577,4 +1579,123 @@ async function toggleCity(id) {
   const data = await api("/admin.php?action=toggle_city","POST",{ city_id:id });
   if (data.error) { showToast(data.error,"error"); return; }
   loadCitiesList();
+}
+
+// ── SETTINGS: service switches + two-factor authentication ──────────────────
+// The switches are enforced by the server (admin.php set_app_setting). Turning one OFF never touches trips that already exist,
+// cancellations, refunds or verification of payments already started; an admin can always come back here to turn it ON again.
+const ADMIN_SWITCHES = [
+  { key: "bookings_enabled", label: "New bookings",
+    onText:  "Customers can create new bookings and start payments.",
+    offText: "New bookings and new payments are refused. Existing trips, cancellations, refunds and payment verification keep working.",
+    confirmOff: "Turn OFF new bookings? Customers will not be able to book or start a payment until you turn it back on. Existing trips, cancellations and refunds are not affected." },
+  { key: "payments_enabled", label: "New payments",
+    onText:  "Customers can pay for bookings and top up their wallet.",
+    offText: "Starting new payments and wallet top-ups is refused. Verification of payments already started, refunds and cancellations keep working.",
+    confirmOff: "Turn OFF new payments? Customers will not be able to start a payment or top up until you turn it back on. Payments already started are still verified, and refunds still work." },
+];
+
+function settingsErrorCard(title, msg, retry) {
+  return `<div class="card" style="margin-bottom:16px"><div style="font-weight:700;margin-bottom:6px">${esc(title)}</div>
+    <div style="opacity:.8;margin-bottom:10px">${esc(msg)}</div>
+    <button class="btn btn-sm btn-ghost" onclick="${retry}">Try again</button></div>`;
+}
+
+function adminSwitchesHtml(st) {
+  if (!st || st.error) return settingsErrorCard("Service switches", (st && st.error) || "Could not load the switches.", "loadAdminSettings()");
+  const rows = ADMIN_SWITCHES.map(sw => {
+    const on = !!st[sw.key];
+    const note = (sw.key === "payments_enabled" && on && !st.bookings_enabled) ? `<div style="font-size:12px;color:var(--amber);margin-top:4px">New payments are also refused while New bookings is off.</div>` : "";
+    return `<div class="card" style="margin-bottom:8px">
+      <div class="flex-between">
+        <div style="min-width:0;padding-right:12px">
+          <div style="font-weight:700">${esc(sw.label)} <span class="badge ${on ? "badge-green" : "badge-red"}">${on ? "ON" : "OFF"}</span></div>
+          <div style="font-size:13px;opacity:.8;margin-top:4px">${esc(on ? sw.onText : sw.offText)}</div>${note}
+        </div>
+        <button class="btn btn-sm ${on ? "btn-ghost" : "btn-gold"}" onclick="setAdminSwitch('${sw.key}', ${on ? "false" : "true"})">${on ? "Turn OFF" : "Turn ON"}</button>
+      </div>
+    </div>`;
+  }).join("");
+  const map = `<div class="card" style="margin-bottom:8px">
+      <div style="font-weight:700">Map provider (Mapbox) <span class="badge ${st.mapbox_enabled ? "badge-green" : "badge-red"}">${st.mapbox_enabled ? "ON" : "OFF"}</span></div>
+      <div style="font-size:13px;opacity:.8;margin-top:4px">Set in the server configuration, not here. It is OFF unless the owner enables it on the server.</div>
+    </div>`;
+  return `<h3 style="margin:8px 0 10px">Service switches</h3>${rows}${map}`;
+}
+
+async function setAdminSwitch(key, enabled) {
+  const sw = ADMIN_SWITCHES.find(x => x.key === key);
+  if (!sw) return;
+  if (!enabled && !confirm(sw.confirmOff)) return;
+  const data = await api("/admin.php?action=set_app_setting", "POST", { key, enabled: enabled === true });
+  if (data.error) { showToast(data.error, "error"); return; }
+  showToast(sw.label + " is now " + (enabled ? "ON" : "OFF"), "success");
+  loadAdminSettings();
+}
+
+function adminTwoFactorCardHtml(t) {
+  if (!t || t.error) return settingsErrorCard("Two-factor authentication", (t && t.error) || "Could not load the status.", "loadAdminSettings()");
+  const head = `<h3 style="margin:20px 0 10px">Two-factor authentication</h3>`;
+  if (t.enabled) {
+    return head + `<div class="card" id="admin-2fa-card">
+      <div style="font-weight:700">Your account <span class="badge badge-green">ON</span></div>
+      <div style="font-size:13px;opacity:.8;margin:4px 0 12px">Recovery codes left: ${Number(t.recovery_codes_left) || 0}${(Number(t.recovery_codes_left) || 0) <= 2 ? " (low: turn two-factor off and on again to get new codes)" : ""}.</div>
+      <div class="input-group"><label>Password</label><input type="password" id="adm2fa-pass" class="input-field" autocomplete="current-password"></div>
+      <div class="input-group"><label>Current 6-digit code</label><input type="text" id="adm2fa-code" class="input-field" inputmode="numeric" autocomplete="one-time-code" maxlength="10"></div>
+      <button class="btn btn-ghost btn-full" onclick="disableAdmin2fa()">Turn two-factor OFF</button>
+    </div>`;
+  }
+  return head + `<div class="card" id="admin-2fa-card">
+      <div style="font-weight:700">Your account <span class="badge badge-red">OFF</span></div>
+      <div style="font-size:13px;opacity:.8;margin:4px 0 12px">${t.required ? "The server requires it: you will be asked to set it up at your next sign-in." : "Optional until you set it up. Once it is on, every sign-in needs a code from your authenticator app."}</div>
+      <button class="btn btn-gold btn-full" onclick="startAdmin2faSetup()">Set up two-factor</button>
+    </div>`;
+}
+
+async function loadAdminSettings() {
+  const el = document.getElementById("tab-admin-settings");
+  if (!el) return;
+  el.innerHTML = `<div class="page-header"><h2>Settings</h2></div><div style="padding:0 20px">${shimmerCards(2)}</div>`;
+  const [st, t] = await Promise.all([api("/admin.php?action=get_app_settings"), api("/auth.php?action=admin_2fa_status")]);
+  el.innerHTML = `<div class="page-header"><h2>Settings</h2></div><div style="padding:0 20px 24px;max-width:640px">${adminSwitchesHtml(st)}${adminTwoFactorCardHtml(t)}</div>`;
+}
+
+async function startAdmin2faSetup() {
+  const box = document.getElementById("admin-2fa-card");
+  const data = await api("/auth.php?action=admin_2fa_begin", "POST", {});
+  if (data.error) { showToast(data.error, "error"); return; }
+  if (!box) return;
+  box.innerHTML = `
+    <div style="font-weight:700;margin-bottom:4px">Set up two-factor</div>
+    <div style="font-size:13px;opacity:.8">Add this key to an authenticator app (Google Authenticator, Microsoft Authenticator, Authy, 1Password...), then enter the 6-digit code it shows.</div>
+    ${adminSecretBlock(data.secret, data.otpauth_uri)}
+    <div class="input-group"><label>Code from the app</label><input type="text" id="adm2fa-code" class="input-field" inputmode="numeric" autocomplete="one-time-code" maxlength="10"
+      onkeypress="if(event.key==='Enter') confirmAdmin2faSetup()"></div>
+    <button class="btn btn-gold btn-full" onclick="confirmAdmin2faSetup()">Turn on two-factor</button>
+    <button class="btn btn-ghost btn-full" style="margin-top:8px" onclick="loadAdminSettings()">Cancel</button>`;
+}
+
+async function confirmAdmin2faSetup() {
+  const code = (document.getElementById("adm2fa-code")?.value || "").replace(/\s+/g, "");
+  if (!code) { showToast("Enter the 6-digit code", "error"); return; }
+  const data = await api("/auth.php?action=admin_2fa_enable", "POST", { code });
+  if (data.error) { showToast(data.error, "error"); return; }
+  const box = document.getElementById("admin-2fa-card");
+  if (!box) return;
+  box.innerHTML = `
+    <div style="font-weight:700;margin-bottom:4px">Two-factor is ON. Save your recovery codes now.</div>
+    <div style="font-size:13px;opacity:.8">They are shown only once. Each works one time if you lose your phone. Store them somewhere safe.</div>
+    ${adminRecoveryCodesHtml(data.recovery_codes)}
+    <button class="btn btn-gold btn-full" style="margin-top:8px" onclick="lastRecoveryCodes = []; loadAdminSettings()">I have saved them - done</button>`;
+}
+
+async function disableAdmin2fa() {
+  const password = document.getElementById("adm2fa-pass")?.value || "";
+  const code     = (document.getElementById("adm2fa-code")?.value || "").replace(/\s+/g, "");
+  if (!password || !code) { showToast("Enter your password and a current code", "error"); return; }
+  if (!confirm("Turn two-factor OFF? Sign-in will need only your password.")) return;
+  const data = await api("/auth.php?action=admin_2fa_disable", "POST", { password, code });
+  if (data.error) { showToast(data.error, "error"); return; }
+  showToast("Two-factor is now OFF", "success");
+  loadAdminSettings();
 }

@@ -444,12 +444,33 @@ function handleAuthSuccess(data) {
 }
 
 // ── Admin login ───────────────────────────────────────────────────────────────
-async function adminLogin() {
-  const email = document.getElementById("admin-email").value;
-  const pass  = document.getElementById("admin-password").value;
-  if (!email || !pass) { showToast("Enter email and password", "error"); return; }
-  const data = await api("/auth.php?action=admin_login", "POST", { email, password: pass });
-  if (data.error) { showToast(data.error, "error"); return; }
+// Step 1 is the password. For an admin with two-factor on, the server answers {two_factor_required, challenge} and issues NO session;
+// step 2 sends an authenticator code (or one single-use recovery code) together with that challenge. If ADMIN_2FA_REQUIRED=1 and the
+// admin has not enrolled yet, the answer is {needs_2fa_setup, challenge} and the admin enrols first. The challenge lives in memory
+// only (never in storage) and expires after a few minutes; the password field is cleared as soon as step 2 starts.
+let adminChallenge      = null;
+let adminPendingSession = null;
+let lastRecoveryCodes   = [];
+
+function adminStep(html) {
+  const form = document.getElementById("admin-login-form");
+  const box  = document.getElementById("admin-2fa-area");
+  if (!box) return;
+  if (form) form.style.display = html ? "none" : "block";
+  box.style.display = html ? "block" : "none";
+  box.innerHTML = html || "";
+  if (html) setTimeout(() => box.querySelector("input")?.focus(), 50);
+}
+
+function resetAdminLoginSteps() {
+  adminChallenge = null; adminPendingSession = null; lastRecoveryCodes = [];
+  adminStep("");
+  const pw = document.getElementById("admin-password");
+  if (pw) pw.value = "";
+}
+
+function finishAdminLogin(data) {
+  resetAdminLoginSteps();
   authToken   = data.token;
   currentUser = data.user;
   localStorage.setItem("bookkam_token", data.token);
@@ -457,6 +478,137 @@ async function adminLogin() {
   startInactivityWatcher();
   showPage("page-admin-dashboard");
   loadAdminDashboard();
+}
+
+async function adminLogin() {
+  const email = document.getElementById("admin-email").value;
+  const pass  = document.getElementById("admin-password").value;
+  if (!email || !pass) { showToast("Enter email and password", "error"); return; }
+  const data = await api("/auth.php?action=admin_login", "POST", { email, password: pass });
+  if (data.error) { showToast(data.error, "error"); return; }
+  if (data.two_factor_required && data.challenge) {
+    adminChallenge = data.challenge;
+    document.getElementById("admin-password").value = "";
+    renderAdmin2faStep(false);
+    return;
+  }
+  if (data.needs_2fa_setup && data.challenge) {
+    adminChallenge = data.challenge;
+    document.getElementById("admin-password").value = "";
+    renderAdmin2faSetup();
+    return;
+  }
+  if (!data.token || !data.user) { showToast("Unexpected response from the server", "error"); return; }
+  finishAdminLogin(data);
+}
+
+// Step 2: authenticator code, or a recovery code (each works once).
+function renderAdmin2faStep(useRecovery) {
+  adminStep(useRecovery ? `
+    <p style="margin:0 0 12px">Enter one of your recovery codes. Each code can be used once.</p>
+    <div class="input-group">
+      <label>Recovery code</label>
+      <input type="text" id="admin-2fa-recovery" class="input-field" autocomplete="off" autocapitalize="off" spellcheck="false"
+        placeholder="xxxx-xxxx-xxxx" onkeypress="if(event.key==='Enter') submitAdmin2fa(true)">
+    </div>
+    <button class="btn btn-gold btn-full" onclick="submitAdmin2fa(true)"><span class="material-icons-outlined">verified_user</span> Verify</button>
+    <button class="btn btn-ghost btn-full" style="margin-top:8px" onclick="renderAdmin2faStep(false)">Use my authenticator app instead</button>
+    <button class="btn btn-ghost btn-full" style="margin-top:8px" onclick="resetAdminLoginSteps()">Cancel</button>
+  ` : `
+    <p style="margin:0 0 12px">Enter the 6-digit code from your authenticator app.</p>
+    <div class="input-group">
+      <label>Authentication code</label>
+      <input type="text" id="admin-2fa-code" class="input-field" inputmode="numeric" autocomplete="one-time-code" maxlength="10"
+        placeholder="123456" onkeypress="if(event.key==='Enter') submitAdmin2fa(false)">
+    </div>
+    <button class="btn btn-gold btn-full" onclick="submitAdmin2fa(false)"><span class="material-icons-outlined">verified_user</span> Verify</button>
+    <button class="btn btn-ghost btn-full" style="margin-top:8px" onclick="renderAdmin2faStep(true)">Lost your phone? Use a recovery code</button>
+    <button class="btn btn-ghost btn-full" style="margin-top:8px" onclick="resetAdminLoginSteps()">Cancel</button>
+  `);
+}
+
+async function submitAdmin2fa(useRecovery) {
+  const el = document.getElementById(useRecovery ? "admin-2fa-recovery" : "admin-2fa-code");
+  const v  = (el && el.value || "").trim();
+  if (!v) { showToast(useRecovery ? "Enter a recovery code" : "Enter the 6-digit code", "error"); return; }
+  const body = { challenge: adminChallenge };
+  if (useRecovery) body.recovery_code = v; else body.code = v.replace(/\s+/g, "");
+  const data = await api("/auth.php?action=admin_login_2fa", "POST", body);
+  if (data.error) {
+    showToast(data.error, "error");
+    if (/expired|start again/i.test(data.error)) resetAdminLoginSteps();
+    else if (el) { el.value = ""; if (el.focus) el.focus(); }
+    return;
+  }
+  if (!data.token || !data.user) { showToast("Unexpected response from the server", "error"); return; }
+  finishAdminLogin(data);
+}
+
+// Shared by the login enrolment (below) and Settings -> Two-factor (admin.js).
+function adminSecretBlock(secret, uri) {
+  const grouped = String(secret || "").replace(/(.{4})/g, "$1 ").trim();
+  const link = (typeof uri === "string" && uri.startsWith("otpauth://"))
+    ? `<p style="margin:8px 0 0"><a href="${esc(uri)}">Open in my authenticator app</a> (on this phone)</p>` : "";
+  return `<div class="card" style="margin:12px 0">
+    <div style="font-size:12px;opacity:.7;margin-bottom:6px">Setup key (type it into your authenticator app; time-based, 6 digits)</div>
+    <div style="font-family:'Space Mono',monospace;font-size:16px;letter-spacing:1px;word-break:break-all">${esc(grouped)}</div>${link}
+  </div>`;
+}
+
+function adminRecoveryCodesHtml(codes) {
+  lastRecoveryCodes = Array.isArray(codes) ? codes.slice() : [];
+  return `<div class="card" style="margin:12px 0;font-family:'Space Mono',monospace;line-height:1.9">${lastRecoveryCodes.map(c => esc(c)).join("<br>")}</div>
+    <button class="btn btn-ghost btn-full" onclick="copyRecoveryCodes()"><span class="material-icons-outlined">content_copy</span> Copy the codes</button>`;
+}
+
+function copyRecoveryCodes() {
+  const text = lastRecoveryCodes.join("\n");
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => showToast("Copied", "success"), () => showToast("Could not copy; write the codes down", "error"));
+  } else showToast("Copy is not available here; write the codes down", "error");
+}
+
+// Enrolment during sign-in (only when the server requires two-factor and this admin has not set it up yet).
+async function renderAdmin2faSetup() {
+  const data = await api("/auth.php?action=admin_2fa_begin", "POST", { challenge: adminChallenge });
+  if (data.error) { showToast(data.error, "error"); resetAdminLoginSteps(); return; }
+  adminStep(`
+    <p style="margin:0 0 4px">Administrator accounts must use two-factor authentication.</p>
+    <p style="margin:0;opacity:.8">Add this key to an authenticator app (Google Authenticator, Microsoft Authenticator, Authy, 1Password...), then enter the 6-digit code it shows.</p>
+    ${adminSecretBlock(data.secret, data.otpauth_uri)}
+    <div class="input-group">
+      <label>Code from the app</label>
+      <input type="text" id="admin-2fa-code" class="input-field" inputmode="numeric" autocomplete="one-time-code" maxlength="10"
+        placeholder="123456" onkeypress="if(event.key==='Enter') submitAdmin2faSetup()">
+    </div>
+    <button class="btn btn-gold btn-full" onclick="submitAdmin2faSetup()">Turn on two-factor</button>
+    <button class="btn btn-ghost btn-full" style="margin-top:8px" onclick="resetAdminLoginSteps()">Cancel</button>
+  `);
+}
+
+async function submitAdmin2faSetup() {
+  const code = (document.getElementById("admin-2fa-code")?.value || "").replace(/\s+/g, "");
+  if (!code) { showToast("Enter the 6-digit code", "error"); return; }
+  const data = await api("/auth.php?action=admin_2fa_enable", "POST", { challenge: adminChallenge, code });
+  if (data.error) {
+    showToast(data.error, "error");
+    if (/expired|unauthori/i.test(data.error)) resetAdminLoginSteps();
+    return;
+  }
+  if (!data.token || !data.user) { showToast("Unexpected response from the server", "error"); resetAdminLoginSteps(); return; }
+  adminPendingSession = { token: data.token, user: data.user };
+  adminStep(`
+    <p style="margin:0 0 4px"><strong>Save your recovery codes now.</strong></p>
+    <p style="margin:0;opacity:.8">They are shown only once. Each works one time if you lose your phone. Store them somewhere safe, not in this browser.</p>
+    ${adminRecoveryCodesHtml(data.recovery_codes)}
+    <button class="btn btn-gold btn-full" style="margin-top:8px" onclick="finishAdminSetup()">I have saved them - continue</button>
+  `);
+}
+
+function finishAdminSetup() {
+  const sess = adminPendingSession;
+  if (!sess) { resetAdminLoginSteps(); return; }
+  finishAdminLogin(sess);
 }
 
 // ── Under review screen ───────────────────────────────────────────────────────

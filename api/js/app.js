@@ -118,6 +118,7 @@ function showAdminLogin() {
   document.getElementById('auth-content').style.display     = 'none';
 }
 function hideAdminLogin() {
+  if (typeof resetAdminLoginSteps === 'function') resetAdminLoginSteps();
   document.getElementById('admin-login-area').style.display = 'none';
   document.getElementById('auth-content').style.display     = 'block';
 }

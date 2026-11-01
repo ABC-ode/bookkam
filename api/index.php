@@ -99,6 +99,7 @@ $adminPortal = $adminPortalKey !== '' && isset($_GET['bkp']) && hash_equals($adm
       </div>
       <div id="auth-content"></div>
       <div id="admin-login-area" style="display:none;margin-top:16px">
+        <div id="admin-login-form">
         <div class="input-group">
           <label>Admin Email</label>
           <input type="email" id="admin-email" class="input-field" placeholder="admin@bookkam.com">
@@ -114,6 +115,8 @@ $adminPortal = $adminPortalKey !== '' && isset($_GET['bkp']) && hash_equals($adm
         <button class="btn btn-ghost btn-full" style="margin-top:8px" onclick="hideAdminLogin()">
           <span class="material-icons-outlined">close</span> Cancel
         </button>
+        </div>
+        <div id="admin-2fa-area" style="display:none"></div>
       </div>
     </div>
      
@@ -1582,6 +1585,7 @@ $adminPortal = $adminPortalKey !== '' && isset($_GET['bkp']) && hash_equals($adm
         <div class="tab-content" id="tab-admin-promos"     style="display:none"></div>
         <div class="tab-content" id="tab-admin-cities"     style="display:none"></div>
         <div class="tab-content" id="tab-admin-booking-card" style="display:none"></div>
+        <div class="tab-content" id="tab-admin-settings"   style="display:none"></div>
       </div>
     </main>
   </div>

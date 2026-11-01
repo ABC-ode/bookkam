@@ -73,6 +73,7 @@ The current adapter is wrong: it sends the SECRET key as Bearer on every call an
 
 ## Batch log
 - Batch 1 (frontend) DONE: Hide Event honours an empty list; Apple button and Apple JS tag removed (server still answers 503); Driver role card removed, driver sign-in unchanged (role-agnostic), "I want to drive with BOOKKAM" checkbox on the Register tab sends role=driver (Google sign-up always creates a customer); admin sidebar `.open` + topbar toggle + backdrop + ESC + <900px drawer; `toggle_city` added to admin.php; sw.js CACHE_NAME bookkam-v7; `?v=` bumped on css/js tags and in the SW asset list. NOT browser-tested (no browser in the sandbox).
+- Batch 2 (admin screens) DONE: Settings tab (sidebar "Settings") with the bookings/payments switches (confirm before OFF, explains what keeps working), read-only Mapbox status, and two-factor enrol (secret + otpauth link, no QR image), recovery codes shown once, disable (password + code); admin login step 2 (authenticator or recovery code), plus forced enrolment when the server requires it. NOT browser-tested; only stubbed-DOM smoke checks (formal tests in Batch 3).
 
 ## Blockers
 - The agent sandbox has no GitHub credentials, so `git push` fails ("could not read Username"). Commits exist only in the sandbox; they are delivered as a git bundle / patch series. Owner: apply with `git am` or `git pull <bundle> feat/email-auth-opay`, then push. No credentials are to be pasted into chat.

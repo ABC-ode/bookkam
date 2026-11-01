@@ -83,7 +83,7 @@ const T = "ab12".repeat(16);
   const html = s.els["auth-method-form"].innerHTML;
   check("an attacker-chosen e-mail cannot inject markup into the confirmation screen", !/<img|<script/i.test(html) && html.includes("&lt;img"), html.slice(0, 200));
 
-  check("no phone / OTP functions remain in auth.js", s.api.typeofs.sendOTP === "undefined" && s.api.typeofs.verifyOTP === "undefined" && s.api.typeofs.renderPhoneForm === "undefined" && !/otp|method-btn-phone/i.test(read("auth.js")));
+  check("no phone / OTP functions remain in auth.js", s.api.typeofs.sendOTP === "undefined" && s.api.typeofs.verifyOTP === "undefined" && s.api.typeofs.renderPhoneForm === "undefined" && !/\botp\b|sendotp|verifyotp|method-btn-phone/i.test(read("auth.js")));
   console.log(failures === 0 ? "AUTH_FRONTEND_OK" : "AUTH_FRONTEND_FAILED (" + failures + ")");
   process.exit(failures === 0 ? 0 : 1);
 })();

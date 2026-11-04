@@ -46,14 +46,20 @@ define("JWT_SECRET", $jwtSecret);
 define("GOOGLE_CLIENT_ID", env("GOOGLE_CLIENT_ID"));
 // Token verification endpoint. Overridable ONLY in test environments (so tests can stub Google); production always uses Google.
 define("GOOGLE_TOKENINFO_URL", (TEST_MODE && env("GOOGLE_TOKENINFO_URL") !== "") ? env("GOOGLE_TOKENINFO_URL") : "https://oauth2.googleapis.com/tokeninfo");
-// OPay remains disabled unless explicitly enabled and the server credentials exist.
-// The checkout integration still requires validation against current official OPay docs;
-// credentials alone do not mean it is production-ready.
+// OPay (Nigeria, NGN). OFF unless OPAY_ENABLED=true AND the public key, the secret key and the merchant id are all set.
+// Credentials alone do not make it production-ready: complete one real sandbox payment, callback and refund first.
+// OPAY_ENV: "sandbox" (default, https://testapi.opaycheckout.com) or "production" (https://liveapi.opaycheckout.com).
+// OPAY_BASE_URL (loopback only) and OPAY_CASHIER_HOSTS=127.0.0.1 let the test-suite use a fake local server; they are
+// ignored unless APP_ENV is a development value, and never apply in production. OPAY_CASHIER_HOSTS may also hold extra
+// trusted cashier host suffixes (comma separated) if OPay's cashier is served from a host other than *.opaycheckout.com.
 define("OPAY_PUBLIC_KEY", env("OPAY_PUBLIC_KEY"));
 define("OPAY_SECRET_KEY", env("OPAY_SECRET_KEY"));
 define("OPAY_MERCHANT_ID", env("OPAY_MERCHANT_ID"));
+define("OPAY_ENV", strtolower(env("OPAY_ENV", "sandbox")) === "production" ? "production" : "sandbox");
+define("OPAY_BASE_URL", (OPAY_ENV !== "production" && TEST_MODE) ? rtrim(env("OPAY_BASE_URL"), "/") : "");
+define("OPAY_CASHIER_HOSTS", env("OPAY_CASHIER_HOSTS"));
 define("OPAY_ENABLED", env("OPAY_ENABLED", "false") === "true"
-    && OPAY_SECRET_KEY !== "" && OPAY_MERCHANT_ID !== "");
+    && OPAY_PUBLIC_KEY !== "" && OPAY_SECRET_KEY !== "" && OPAY_MERCHANT_ID !== "");
 
 // Twilio WhatsApp
 define("TWILIO_SID",               env("TWILIO_SID"));

@@ -24,12 +24,31 @@
 * **Late-payment policy:** if the booking is cancelled or already paid when a verified payment arrives, the booking is **not** revived; the amount is credited to the customer's wallet with a notification (event bookings have no wallet: logged for manual refund). Chosen because it is safe and automatic; change it if the business prefers refund-to-source.
 * Failed/cancelled provider results are logged (reference and status only; no secrets or personal data) and leave the booking `pending`. They are **not** written to `payments.status`, because the production enum for that column is not in the repository (see "Data needed").
 
-## OPay: what is NOT verified
-The endpoint paths, auth header scheme, amount units, response codes (`00000`), status names and webhook semantics are the assumptions already in the code. They have **not** been checked against current official OPay documentation or a sandbox. Do not set `OPAY_ENABLED=true` in production until:
-1. Official merchant docs and sandbox credentials are obtained and the adapter is checked against them (paths, signing, units, statuses, webhook authentication, refunds).
-2. Provider contract tests with sanitized recorded fixtures are added.
-3. Success, pending, failure, cancellation, wrong amount/currency, duplicate callback, unknown reference, timeout and outage are exercised end-to-end in staging.
-`OPAY_ENABLED` is only honoured when `OPAY_SECRET_KEY` and `OPAY_MERCHANT_ID` are also set. The OPay webhook performs no signature check of its own; it relies on re-verifying with OPay's API, which must be confirmed against the docs.
+## OPay (Nigeria): what the adapter does, and what is NOT verified
+**Status: disabled by default, and NOT verified against OPay.** No OPay credential or sandbox transaction was ever available when this was written. Everything below was checked against OPay's published Nigeria documentation (`documentation.opaycheckout.com`) and exercised against a fake local server only. Do not call it production-ready.
+
+**Correction to earlier notes:** OPay has two documentation sites. `doc.opaycheckout.com` is the Egypt one (EGP, hosts `sandboxapi`/`api`). Nigeria's is `documentation.opaycheckout.com` (NGN, kobo, hosts `testapi.opaycheckout.com` for sandbox and `liveapi.opaycheckout.com` for production). The adapter uses the Nigeria hosts.
+
+| Topic | What the Nigeria documentation says | Where it is implemented / tested |
+|---|---|---|
+| Create | `POST /api/v1/international/cashier/create`, `Authorization: Bearer <public key>`, `MerchantId`; `country` NG, `amount.total` in kobo (100 kobo = 1 NGN), `returnUrl`, `product.name` + `product.description` required; success code `00000` | `OpayPaymentProvider::initiate`; `opay_tests.py` O3-O11 |
+| Status | `POST /cashier/status`, `Bearer HMAC-SHA512(exact JSON body, secret key)`; statuses INITIAL, PENDING, SUCCESS, FAIL, CLOSE | `verify`; V1-V17, S2 (independent HMAC) |
+| Callback | `{payload, sha512, type}`; `sha512` = HMAC-SHA3-512 over `{Amount:"..",Currency:"..",Reference:"..",Refunded:t/f,Status:"..",Timestamp:"..",Token:"..",TransactionID:".."}`; non-2xx answers are retried for 72 hours | `verifyCallback`; known-answer test reproduces the signature printed in OPay's own sample (`opay-adapter-contract.php` K1-K2); W1-W13 |
+| Refund | `POST /payment/refund/create` (+ `/refund/query`), signed like status; `refundWay` Original or BankAccount; card, bank-transfer and USSD payments can only be refunded to a bank account the customer gives | `refund`, `refundStatus`, admin `opay_refund`; R1-R14 |
+
+**How the app uses it**
+* A callback is only a hint. After its signature is verified, status, amount and currency come from OPay's signed status API, through the same settlement code as the customer-facing verify. A forged or tampered callback gets 400 and makes no call to OPay. If OPay cannot confirm yet the answer is 503 so OPay retries. Duplicate callbacks are harmless.
+* Provider values must match the documentation exactly (`SUCCESS`, `NGN`); anything else is never success. A voided payment is not money received. The cashier URL must be https on an OPay host (`*.opaycheckout.com`, or hosts you list in `OPAY_CASHIER_HOSTS`).
+* Admin-only actions in `payments.php` (no screen for them yet): `opay_refund` (full amount; the refund reference `BKM-RF-<payment id>` is fixed per payment, so a repeat can never refund twice), `opay_refund_status`, `opay_reconcile` (asks OPay about pending OPay payments of the last 7 days, newest first, limit 1-100). Bank details typed for a refund are sent to OPay and are not stored or logged. These actions do not change `payments.status` or the booking, because the production enum is not in the repository: record refunds in your books. The default cancellation refund is still wallet credit.
+
+**Not verified (needs real sandbox keys; the owner adds them to the server `.env`, never to chat or git)**
+1. One real sandbox payment, one real callback and one real refund. Until then, treat every behaviour above as an assumption that matches the documents.
+2. The production cashier host. Only the sandbox cashier (`sandboxcashier.opaycheckout.com`) appears in the documents; if production uses another host, creating a payment fails closed until it is added to `OPAY_CASHIER_HOSTS`.
+3. Whether OPay honours the per-request `callbackUrl` or needs the webhook URL set in the OPay dashboard (`<APP_URL>/api/payments.php?action=opay_webhook`), and what OPay appends to `returnUrl`.
+4. The shape and signature of refund-status notifications (they are acknowledged and ignored; use `opay_refund_status`), the exact set of error codes, rate limits, and OPay's source IP addresses.
+5. Refunds to the original source for each pay method, and which pay method a given customer used (not stored today).
+
+`OPAY_ENABLED` is only honoured when `OPAY_PUBLIC_KEY`, `OPAY_SECRET_KEY` and `OPAY_MERCHANT_ID` are all set. Tests: `python3 tests/functional/opay_tests.py` (161 checks against `tests/fake_opay/router.php`) and `php tests/opay-adapter-contract.php`.
 
 ## Every code path that changes `users.wallet_balance`
 | Path | Direction | Guard |

@@ -30,7 +30,7 @@ Tests: `python3 tests/functional/run_tests.py` (SQLite stand-in), `python3 tests
   passed at commit fda58fd, BEFORE the newer backend work: rerun them. The MySQL runner does not yet apply migration 010.
 
 ## To do, in this order
-(Batches 1-4 are DONE, see "Batch log" at the end.)
+(Batches 1-5 are DONE, see "Batch log" at the end.)
 1. Frontend fixes
    - Hide Event: `index.php` `renderHomeBookingCards` falls back to the built-in card when the API returns an empty list. Use `Array.isArray(data.cards)`.
    - Remove the Apple button (`method-btn-apple` in `js/auth.js`). The server already answers 503 in production.
@@ -83,6 +83,12 @@ The current adapter is wrong: it sends the SECRET key as Bearer on every call an
 ## Owner actions (Batch 4)
 - The old `pk.` token is still in git history (and was on the live site). It is a public-type token, but rotate it or restrict it to your domain in the Mapbox dashboard before you enable Mapbox, then set `MAPBOX_ENABLED=1` and `MAPBOX_PUBLIC_TOKEN=pk...` only in the server .env.
 - Pushing `.github/workflows/ci.yml` needs a token with the `workflow` scope (or push from your own machine).
+
+- Batch 5 (OPay) DONE, still DISABLED and NOT verified against OPay: re-checked OPay's official docs and FOUND THE EARLIER NOTES WERE FROM THE EGYPT SITE (`doc.opaycheckout.com`: EGP, hosts sandboxapi/api). Nigeria's docs (`documentation.opaycheckout.com`) use `testapi.opaycheckout.com` (sandbox) and `liveapi.opaycheckout.com` (production), NGN in kobo, `product.name/description` required on create. `OpayPaymentProvider` rewritten to them: public key on create; HMAC-SHA512 of the exact body on status/refund; amount/currency/reference checks; exact documented status values only (no case folding); voided = not paid; cashier URL must be https on an OPay host; callback verification (HMAC-SHA3-512; the sample signature printed in OPay's docs is reproduced in a known-answer test); webhook treats the callback as a hint and re-verifies via the status API (400 forged, 503 retry, duplicates harmless); admin-only `opay_refund` (deterministic BKM-RF-<payment id> reference = cannot double refund), `opay_refund_status`, `opay_reconcile` (newest first, last 7 days). `OPAY_ENABLED` now also needs `OPAY_PUBLIC_KEY`. Return/callback URLs now come from APP_URL (the old code sent a hard-coded bookkam.com address as the callback). New: `tests/fake_opay/router.php`, `tests/functional/opay_tests.py` (161 checks), `tests/opay-adapter-contract.php`; 14 deliberate breaks were each caught. See docs/payments.md for the list of what only a real sandbox can confirm.
+
+## Owner actions (Batch 5)
+- Add the OPay sandbox keys and merchant id to the SERVER .env yourself (OPAY_PUBLIC_KEY, OPAY_SECRET_KEY, OPAY_MERCHANT_ID, OPAY_ENV=sandbox, APP_URL=https://...) and only then OPAY_ENABLED=true on a staging copy. Then do one real sandbox payment, callback and refund and tell me what OPay actually returned.
+- Check whether OPay needs the webhook address set in its dashboard: <APP_URL>/api/payments.php?action=opay_webhook.
 
 ## Blockers
 - The agent sandbox has no GitHub credentials, so `git push` fails ("could not read Username"). Commits exist only in the sandbox; they are delivered as a git bundle / patch series. Owner: apply with `git am` or `git pull <bundle> feat/email-auth-opay`, then push. No credentials are to be pasted into chat.

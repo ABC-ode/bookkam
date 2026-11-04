@@ -23,3 +23,5 @@ CREATE TABLE IF NOT EXISTS welcome_credit_claims(id INTEGER PRIMARY KEY AUTOINCR
 CREATE TABLE IF NOT EXISTS auth_tokens(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, purpose TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, expires_at TEXT NOT NULL, used_at TEXT, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS app_settings(k TEXT PRIMARY KEY, v TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by INTEGER);
 INSERT OR IGNORE INTO app_settings(k,v,updated_at) VALUES ('bookings_enabled','1','2026-01-01 00:00:00'),('payments_enabled','1','2026-01-01 00:00:00');
+CREATE TABLE IF NOT EXISTS cities(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, state TEXT, is_active INT DEFAULT 1, secret_note TEXT);
+CREATE TABLE IF NOT EXISTS home_booking_cards(id INTEGER PRIMARY KEY, event_key TEXT, modal_id TEXT, title TEXT, subtitle TEXT, eyebrow TEXT, event_date TEXT, image_url TEXT, is_active INT DEFAULT 1, sort_order INT DEFAULT 0);

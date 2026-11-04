@@ -305,8 +305,9 @@ switch ($action) {
 
     case "toggle_city": {
         // Admin only (default-deny guard above). Flips cities.is_active; the admin UI shows Enable/Disable from the result.
-        $cityId = (int)($input["city_id"] ?? 0);
-        if ($cityId <= 0) respondError("city_id required");
+        $rawId = $input["city_id"] ?? null;     // a real integer or digits only: (int)[...] would silently become 1
+        if (!(is_int($rawId) || (is_string($rawId) && ctype_digit($rawId))) || (int)$rawId <= 0) respondError("city_id required");
+        $cityId = (int)$rawId;
         $s = $pdo->prepare("SELECT is_active FROM cities WHERE id=?"); $s->execute([$cityId]);
         $row = $s->fetch();
         if (!$row) respondError("City not found", 404);

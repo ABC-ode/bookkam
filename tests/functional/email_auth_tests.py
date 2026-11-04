@@ -11,7 +11,7 @@ MySQL env: BK_MYSQL_DB (default bookkam_auth_test), BK_MYSQL_SOCKET *or* BK_MYSQ
            BK_MYSQL_ADMIN_USER/PASS (DDL user for the mysql CLI), BK_MYSQL_APP_USER/PASS (user PHP connects as).
 NEVER point this at a real database: it DROPs and recreates tables.
 """
-import base64, concurrent.futures as cf, email as emaillib, hashlib, http.server, json, os, re, shutil, socketserver, sqlite3, subprocess, sys, tempfile, threading, time
+import base64, concurrent.futures as cf, email as emaillib, hashlib, hmac, http.server, json, struct, os, re, shutil, socketserver, sqlite3, subprocess, sys, tempfile, threading, time
 import urllib.error, urllib.parse, urllib.request
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -69,6 +69,10 @@ def run_sql_file(path, database=None):
     return r.stdout
 
 def migration(n): return os.path.join(ROOT, "migrations", n)
+
+def totp(secret_b32, step):   # RFC 6238, written independently of the PHP implementation under test
+    h = hmac.new(base64.b32decode(secret_b32 + "=" * (-len(secret_b32) % 8)), struct.pack(">Q", step), hashlib.sha1).digest(); o = h[19] & 0xF
+    return "%06d" % ((struct.unpack(">I", h[o:o + 4])[0] & 0x7FFFFFFF) % 1000000)
 
 def setup_db():
     if BACKEND == "sqlite":
@@ -219,7 +223,7 @@ def main():
         db("INSERT INTO users(phone,email,name,role,city,wallet_balance,password_hash) VALUES (NULL,'legacy.mail@test.example','Legacy Mail','customer','Calabar',1000,?)", (pw_hash,))
         db("INSERT INTO users(phone,email,name,role,city,wallet_balance) VALUES ('2348100000900',NULL,'Legacy Phone','customer','Calabar',1000)")
         db("INSERT INTO users(phone,email,name,role,city,wallet_balance,password_hash) VALUES (NULL,'legacy.driver@test.example','Legacy Driver','driver','Calabar',0,?)", (pw_hash,))
-        run_sql_file(migration("008_otp_throttle_and_welcome_claims.sql")); run_sql_file(migration("009_email_auth.sql"))
+        run_sql_file(migration("008_otp_throttle_and_welcome_claims.sql")); run_sql_file(migration("009_email_auth.sql")); run_sql_file(migration("010_app_settings_admin_2fa.sql"))
         legacy = {r["name"]: int(r["id"]) for r in db("SELECT id,name FROM users")}
     smtp = {"APP_ENV": "production", "JWT_SECRET": JWT, "APP_URL": "https://test.bookkam.example", "MAIL_TRANSPORT": "smtp", "SMTP_HOST": "127.0.0.1",
             "SMTP_PORT": str(PORTS["smtp"]), "SMTP_ENCRYPTION": "none", "SMTP_USER": "mailer@test.example", "SMTP_PASS": SMTP_PASS, "MAIL_FROM": "no-reply@test.example"}
@@ -458,6 +462,35 @@ def main():
         idx = int(one("SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME='users' AND INDEX_NAME='uq_users_email'", (dd,)))
         check("MG9 with duplicate e-mails in old data, 009 still succeeds, skips the unique index and says so", idx == 0 and "duplicate e-mail" in out and int(one("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='users' AND COLUMN_NAME='email_verified_at'", (dd,))) == 1, out[-200:])
         subprocess.run(_mysql_args() + ["-e", "DROP DATABASE IF EXISTS %s;" % dd])
+
+        # ---- migration 010 (switches + admin two-factor) on a real MySQL-family engine ----
+        check("MG10 010 created app_settings with both switches ON", {r["k"]: r["v"] for r in db("SELECT k,v FROM app_settings")} == {"bookings_enabled": "1", "payments_enabled": "1"})
+        check("MG11 010 added the four admin two-factor columns to users", int(one("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='users' AND COLUMN_NAME IN ('admin_totp_secret','admin_totp_enabled','admin_totp_last_step','admin_recovery_hashes')")) == 4)
+        db("UPDATE app_settings SET v='0' WHERE k='bookings_enabled'"); db("UPDATE users SET admin_totp_enabled=1, admin_totp_secret='keep-me' WHERE email='legacy.driver@test.example'")
+        run_sql_file(migration("010_app_settings_admin_2fa.sql"))
+        check("MG12 RE-RUNNING 010 never overwrites an admin's OFF choice", one("SELECT v FROM app_settings WHERE k='bookings_enabled'") == "0")
+        check("MG13 RE-RUNNING 010 leaves existing two-factor data untouched", db("SELECT admin_totp_enabled e, admin_totp_secret s FROM users WHERE email='legacy.driver@test.example'")[0] == {"e": "1", "s": "keep-me"})
+        db("UPDATE app_settings SET v='1' WHERE k='bookings_enabled'"); db("UPDATE users SET admin_totp_enabled=0, admin_totp_secret=NULL WHERE email='legacy.driver@test.example'")
+        # the same flows the SQLite suite checks, on the real engine (row-count semantics of the compare-and-swap UPDATEs differ between engines)
+        clear_throttle(); ADM = ("admin@test.example", "Adm1n-pass-9")
+        c, j = call("main", "auth.php", "admin_login", {"email": ADM[0], "password": ADM[1]}); at = j.get("token")
+        c, j = call("main", "auth.php", "admin_2fa_begin", {}, at); sec = j.get("secret"); S0 = int(time.time()) // 30
+        c, j = call("main", "auth.php", "admin_2fa_enable", {"code": totp(sec, S0)}, at); rc = j.get("recovery_codes") or []
+        check("MG14 admin 2FA enrolment works on MySQL (8 recovery codes, only hashes stored)", c == 200 and len(rc) == 8 and all(x not in one("SELECT admin_recovery_hashes FROM users WHERE email='admin@test.example'") for x in rc), (c, j))
+        clear_throttle(); c, j = call("main", "auth.php", "admin_login", {"email": ADM[0], "password": ADM[1]}); ch = j.get("challenge")
+        check("MG15 on MySQL the password step of an enrolled admin gives a challenge and no token", c == 200 and j.get("two_factor_required") is True and "token" not in j, (c, j))
+        c, j = call("main", "auth.php", "admin_login_2fa", {"challenge": ch, "code": totp(sec, S0 + 1)}); check("MG16 the next authenticator code signs in on MySQL", c == 200 and tok(j), (c, j))
+        c, j = call("main", "auth.php", "admin_login_2fa", {"challenge": ch, "code": totp(sec, S0 + 1)}); check("MG17 the same code cannot be replayed on MySQL", c == 401 and not tok(j), (c, j))
+        res = parallel(6, lambda i: call("main", "auth.php", "admin_login_2fa", {"challenge": ch, "recovery_code": rc[0]})[0])
+        check("MG18 one recovery code used 6x in parallel works exactly once on MySQL (compare-and-swap)", res.count(200) == 1, res)
+        c, j = call("main", "auth.php", "admin_login_2fa", {"challenge": ch, "recovery_code": rc[0]}); check("MG19 ...and not again afterwards", c in (401, 429) and not tok(j), (c, j))
+        clear_throttle(); c, j = call("main", "auth.php", "admin_login_2fa", {"challenge": ch, "recovery_code": rc[1]}); at2 = j.get("token")
+        c, j = call("main", "admin.php", "set_app_setting", {"key": "bookings_enabled", "enabled": False}, at2)
+        c2, j2 = call("main", "public-config.php", "x")
+        check("MG20 the bookings switch can be turned OFF on MySQL and public-config follows", c == 200 and j2.get("bookings_enabled") is False and one("SELECT v FROM app_settings WHERE k='bookings_enabled'") == "0", (c, j, j2))
+        c, j = call("main", "bookings.php", "create", {"car_id": 1, "booking_type": "trip", "pickup_address": "x", "city": "Calabar"}, at2)
+        check("MG21 ...and a new booking is refused with 503 while OFF", c in (503, 403) and (c == 503 or j.get("code") != "x"), (c, j))
+        c, j = call("main", "admin.php", "set_app_setting", {"key": "bookings_enabled", "enabled": True}, at2); check("MG22 ...and it turns back ON", c == 200 and one("SELECT v FROM app_settings WHERE k='bookings_enabled'") == "1", (c, j))
 
     bad = [n for n, ok in results if not ok]
     print("\nSUMMARY (%s): %d passed, %d failed of %d" % (BACKEND, len(results) - len(bad), len(bad), len(results)))

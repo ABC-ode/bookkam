@@ -352,6 +352,18 @@ def main():
     c, r = A(PROD, "admin.php", "get_customers", token=AT); fields = set().union(*[set(x.keys()) for x in r.get("customers", [])]) if r.get("customers") else set()
     check("X3 the admin customer list never carries password/otp/token/provider-id columns", not (FORBID & {f.lower() for f in fields}), sorted(fields))
 
+    # ================= G. MAPBOX CONTRACT (what public-config tells browsers) =================
+    for port, extra in [(18114, {"MAPBOX_ENABLED": "1", "MAPBOX_PUBLIC_TOKEN": "pk.test-public-token"}), (18115, {"MAPBOX_ENABLED": "1", "MAPBOX_PUBLIC_TOKEN": "sk.test-SECRET-token"}),
+                        (18116, {"MAPBOX_ENABLED": "1"}), (18117, {"MAPBOX_PUBLIC_TOKEN": "pk.test-public-token"})]:
+        rt.start(port, dict(env, **extra))
+    gcfg = lambda port: A("http://127.0.0.1:%d" % port, "public-config.php", "x")[1]
+    r = gcfg(18111); check("G1 default: Mapbox is OFF and the answer carries no token", r.get("mapbox") == {"enabled": False} and "pk." not in json.dumps(r) and "token" not in json.dumps(r), r)
+    r = gcfg(18114); check("G2 MAPBOX_ENABLED=1 + a public pk. token: enabled, token handed to the browser", r.get("mapbox") == {"enabled": True, "token": "pk.test-public-token"}, r)
+    r = gcfg(18115); check("G3 a SECRET sk. token keeps Mapbox OFF and is never sent", r.get("mapbox") == {"enabled": False} and "sk." not in json.dumps(r) and "SECRET" not in json.dumps(r), r)
+    r = gcfg(18116); check("G4 enabled flag without any token keeps Mapbox OFF", r.get("mapbox") == {"enabled": False}, r)
+    r = gcfg(18117); check("G5 a token without the enable flag keeps Mapbox OFF and the token is NOT leaked", r.get("mapbox") == {"enabled": False} and "pk." not in json.dumps(r), r)
+    c, r = A("http://127.0.0.1:18114", "admin.php", "get_app_settings", token=AT); check("G6 the admin Settings screen shows Mapbox ON only on the server that enabled it", r.get("mapbox_enabled") is True, (c, r))
+
     for p in rt.procs: rt.stop(p)
     shutil.rmtree(rt.TMP, ignore_errors=True)
     f = [n for n, ok, _ in rt.results if not ok]

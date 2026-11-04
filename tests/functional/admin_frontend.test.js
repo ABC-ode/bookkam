@@ -3,7 +3,8 @@
 const fs = require("fs"), path = require("path");
 const ROOT = path.join(__dirname, "..", "..", "api");
 const read = f => fs.readFileSync(path.join(ROOT, f), "utf8");
-let failed = 0;
+let failed = 0, finished = false;   // a hung promise would let node exit quietly: treat that as a failure
+process.on("exit", () => { if (!finished) { console.log("FAIL the test run stopped early (something never finished)"); process.exitCode = 1; } });
 const check = (n, ok, d) => { console.log((ok ? "PASS " : "FAIL ") + n + (!ok && d !== undefined ? " :: " + JSON.stringify(d).slice(0, 200) : "")); if (!ok) failed++; };
 const esc = new Function(read("js/utils.js").replace(/^const /gm, "var ") + ";return esc;")();
 const tick = () => new Promise(r => setImmediate(r));
@@ -107,5 +108,5 @@ function sandbox(file, exportNames, over = {}) {
   check("B2 after enrolment the recovery codes are shown and the session starts only when the admin confirms they saved them", /aaaa-bbbb-cccc/.test(S.el("admin-2fa-area").innerHTML) && !S.store.dash);
   S.mod.finishAdminSetup(); check("B2 ...then the dashboard opens", S.store.dash === true && S.store.bookkam_token === "T2");
 
-  console.log(failed ? "ADMIN_FRONTEND_FAILED (" + failed + ")" : "ADMIN_FRONTEND_OK"); process.exit(failed ? 1 : 0);
+  finished = true; console.log(failed ? "ADMIN_FRONTEND_FAILED (" + failed + ")" : "ADMIN_FRONTEND_OK"); process.exit(failed ? 1 : 0);
 })();

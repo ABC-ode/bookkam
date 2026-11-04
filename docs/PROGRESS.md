@@ -1,4 +1,4 @@
-# Handover: feat/email-auth-opay (checkpoint, NOT release-ready)
+# Handover: feat/email-auth-opay (all six batches done; NOT release-ready, see "Launch blockers")
 
 Repo ABC-ode/bookkam (public). Base: main 022cb50 (untouched). This branch is ahead of main and fast-forwardable.
 Read this file first. Do not re-audit or redo finished work.
@@ -21,16 +21,13 @@ Tests: `python3 tests/functional/run_tests.py` (SQLite stand-in), `python3 tests
   tokens carried in the URL fragment. Google sign-in hardened (verified e-mail only, pre-registration hijack closed, admin accounts refused).
   Admin-only `issue_account_recovery` for phone-only accounts. Live XSS fix for `last_message`.
 - Migrations 008 (backfill on first run only), 009 (e-mail columns and tokens), 010 (app_settings + admin 2FA columns). All re-run safe.
-- Backend, NOT yet covered by new tests: bookings ON/OFF and payments ON/OFF switches (server-enforced, admin actions `get_app_settings` /
-  `set_app_setting`, flags in `public-config.php`); admin TOTP 2FA (`admin_login` step 1, `admin_login_2fa`, `admin_2fa_begin/enable/disable/status`,
-  recovery codes, encrypted secret, lockout shared with the password step); `add_city` returns the real id; driver location only for the customer's own
-  confirmed/active booking; booking city must equal the car's city; pickup coordinates validated; hidden events cannot be booked; suspended users'
-  sessions rejected; Mapbox flags (off by default, public pk. token only).
-- Test status: `run_tests.py` 166/166 after the latest backend changes. `email_auth_tests.py` (69 SQLite / 78 MariaDB) and `auth_frontend.test.js` (14)
-  passed at commit fda58fd, BEFORE the newer backend work: rerun them. The MySQL runner does not yet apply migration 010.
+- Backend now covered by tests (admin_security_tests.py): bookings/payments switches, admin TOTP 2FA, driver location only for the customer's own
+  confirmed/active booking, `add_city`/`toggle_city`, hidden events, booking city = car city, validated pickup coordinates, Mapbox contract in public-config.
+- Test status at the end of Batch 6: see the final report and the Batch log below. Run order: `run_tests.py`, `admin_security_tests.py`, `opay_tests.py`,
+  `email_auth_tests.py` (also with `BK_BACKEND=mysql`), the four `*.test.js` files, `php tests/payment-provider-contract.php`, `php tests/opay-adapter-contract.php`.
 
 ## To do, in this order
-(Batches 1-5 are DONE, see "Batch log" at the end.)
+(Batches 1-6 are DONE, see "Batch log" at the end.)
 1. Frontend fixes
    - Hide Event: `index.php` `renderHomeBookingCards` falls back to the built-in card when the API returns an empty list. Use `Array.isArray(data.cards)`.
    - Remove the Apple button (`method-btn-apple` in `js/auth.js`). The server already answers 503 in production.
@@ -47,17 +44,10 @@ Tests: `python3 tests/functional/run_tests.py` (SQLite stand-in), `python3 tests
 5. OPay (keep disabled): rewrite the adapter, see below. Fake local server tests only.
 6. Update docs (admin-2fa.md, payments.md), final full test run, push, short final report.
 
-## OPay findings (from OPay's public documentation, doc.opaycheckout.com; re-verify before relying on them)
-The current adapter is wrong: it sends the SECRET key as Bearer on every call and only knows the production host.
-- Hosts: sandbox `https://sandboxapi.opaycheckout.com`, production `https://api.opaycheckout.com`.
-- Create: `POST /api/v1/international/cashier/create`, headers `Authorization: Bearer <PublicKey>` and `MerchantId`. Body includes country, reference,
-  amount {total in MINOR units, currency}, returnUrl (required), callbackUrl, cancelUrl, userInfo, product. Success code "00000"; the response carries cashierUrl.
-- Status: `POST /api/v1/international/cashier/status`, body {reference, country}; `Authorization: Bearer <HMAC-SHA512 hex of the exact JSON body, key = SecretKey>`
-  plus `MerchantId`. Statuses INITIAL, PENDING, SUCCESS, FAIL, CLOSE. Check amount, currency and reference on every result.
-- Callback signature: HMAC-SHA3-512 with the SecretKey over the string
-  `{Amount:"..",Currency:"..",Reference:"..",Refunded:t|f,Status:"..",Timestamp:"..",Token:"..",TransactionID:".."}`; compare with `hash_equals`.
-  Always also re-verify through the status API (the callback is only a hint). Duplicate notifications must be idempotent.
-- No OPay credentials were ever available to the agent, so NO sandbox transaction has been run. Do not claim OPay is verified or production-ready.
+## OPay: corrected findings (see docs/payments.md for the full table)
+The notes that used to be here came from OPay's EGYPT documentation (`doc.opaycheckout.com`, hosts sandboxapi/api, EGP). Nigeria's documentation is
+`documentation.opaycheckout.com`: sandbox `https://testapi.opaycheckout.com`, production `https://liveapi.opaycheckout.com`, NGN in kobo. The adapter follows the
+Nigeria documents. No OPay credentials were ever available, so NO sandbox transaction has been run. Do not claim OPay is verified or production-ready.
 
 ## Decisions already taken
 - Welcome credit OFF by default (e-mail addresses are free, so one person could claim it repeatedly). Enable with WELCOME_CREDIT_ENABLED=1 only if acceptable.
@@ -90,5 +80,17 @@ The current adapter is wrong: it sends the SECRET key as Bearer on every call an
 - Add the OPay sandbox keys and merchant id to the SERVER .env yourself (OPAY_PUBLIC_KEY, OPAY_SECRET_KEY, OPAY_MERCHANT_ID, OPAY_ENV=sandbox, APP_URL=https://...) and only then OPAY_ENABLED=true on a staging copy. Then do one real sandbox payment, callback and refund and tell me what OPay actually returned.
 - Check whether OPay needs the webhook address set in its dashboard: <APP_URL>/api/payments.php?action=opay_webhook.
 
+- Batch 6 (docs, full run) DONE: new docs/admin-2fa.md (2FA, switches, reset statement, JWT_SECRET rotation warning), docs/payments.md OPay section rewritten, this file brought up to date. Final run results are in the final report. Push: still blocked, see below.
+
+## Launch blockers (nothing below is done by the code on this branch)
+1. OPay is unverified: needs real sandbox keys, one real payment + callback + refund, the production cashier host, and the dashboard webhook check (docs/payments.md).
+2. Mapbox: rotate or domain-restrict the old public token (it is in git history), then enable with MAPBOX_ENABLED=1 + MAPBOX_PUBLIC_TOKEN only on the server. Real Mapbox, the map picker and real GPS were never tested.
+3. Nothing was run in a real browser or on a phone (sidebar drawer, register checkbox, location buttons, admin Settings and 2FA screens). Do a manual pass.
+4. Migrations 008-010 have never been run on production data by this work (tested on SQLite and MariaDB 10.11 only, not MySQL 8; the MySQL 8 CI job is unverified).
+5. Stale duplicate files under `api/fonts/jss/` (old JS copies) are still deployable; delete them. The `api/fonts/jss/maps.js` token was blanked.
+6. `.github/workflows/ci.yml` changed: pushing it needs a token with the `workflow` scope, or push from your own machine.
+7. Provider refunds are not tracked in the database (the live `payments.status` enum is not in the repo); wallet credit stays the default cancellation refund.
+
 ## Blockers
-- The agent sandbox has no GitHub credentials, so `git push` fails ("could not read Username"). Commits exist only in the sandbox; they are delivered as a git bundle / patch series. Owner: apply with `git am` or `git pull <bundle> feat/email-auth-opay`, then push. No credentials are to be pasted into chat.
+- The agent sandbox has no GitHub credentials. The branch was pushed once, up to fd3bd77 (Batch 2), with a temporary token the owner supplied and then revoked. Everything after that
+  is delivered as a git bundle (`git pull <bundle> feat/email-auth-opay`, then push from your own machine). No credential is stored anywhere in the repo or the sandbox.

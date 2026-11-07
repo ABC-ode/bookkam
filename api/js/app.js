@@ -118,6 +118,7 @@ function showAdminLogin() {
   document.getElementById('auth-content').style.display     = 'none';
 }
 function hideAdminLogin() {
+  if (typeof resetAdminLoginSteps === 'function') resetAdminLoginSteps();
   document.getElementById('admin-login-area').style.display = 'none';
   document.getElementById('auth-content').style.display     = 'block';
 }
@@ -247,7 +248,10 @@ window.addEventListener("DOMContentLoaded", () => {
     if (loader) { loader.style.opacity = "0"; setTimeout(() => loader.remove(), 400); }
   }, 1200);
 
-  if (authToken && currentUser) {
+  // Opened from a verification / reset e-mail? Show that screen instead of restoring a session.
+  const authLink = (typeof handleAuthFragment === "function") && handleAuthFragment();
+
+  if (!authLink && authToken && currentUser) {
     startInactivityWatcher();
     customerCity = currentUser.city || "Calabar";
 
@@ -284,7 +288,7 @@ window.addEventListener("DOMContentLoaded", () => {
       loadAdminDashboard();
     }
 
-  } else {
+  } else if (!authLink) {
     showPage("page-auth");
     renderAuthLogin();
     // Auto-reveal admin form if accessed via secret URL

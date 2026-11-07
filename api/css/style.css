@@ -234,7 +234,7 @@ body.has-banner {
   position: relative;
   z-index: 100;
 }
-.sidebar:hover {
+.sidebar:is(:hover, .open) {
   width: var(--sidebar-expanded);
 }
 
@@ -249,7 +249,7 @@ body.has-banner {
   min-height: 68px;
   justify-content: center;
 }
-.sidebar:hover .sidebar-logo {
+.sidebar:is(:hover, .open) .sidebar-logo {
   justify-content: flex-start;
   padding-left: 16px;
 }
@@ -283,11 +283,11 @@ body.has-banner {
   transition: max-width 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s;
 }
 /* When sidebar is collapsed (not hovered), shrink logo to fit narrow rail */
-.sidebar:not(:hover) .sidebar-logo-img {
+.sidebar:not(:is(:hover, .open)) .sidebar-logo-img {
   max-width: 32px;
   object-position: left center;
 }
-.sidebar:hover .sidebar-logo-img {
+.sidebar:is(:hover, .open) .sidebar-logo-img {
   max-width: 120px;
 }
 .sidebar-logo .logo-text {
@@ -309,8 +309,8 @@ body.has-banner {
   opacity: 0;
   transition: opacity 0.2s;
 }
-.sidebar:hover .logo-text,
-.sidebar:hover .logo-sub {
+.sidebar:is(:hover, .open) .logo-text,
+.sidebar:is(:hover, .open) .logo-sub {
   opacity: 1;
 }
 
@@ -336,7 +336,7 @@ body.has-banner {
   overflow: hidden;
   position: relative;
 }
-.sidebar:hover .sidebar-nav li a {
+.sidebar:is(:hover, .open) .sidebar-nav li a {
   justify-content: flex-start;
   padding-left: 13px;
 }
@@ -355,7 +355,7 @@ body.has-banner {
   width: 32px;
   text-align: center;
 }
-.sidebar:hover .sidebar-nav li a .material-icons-outlined {
+.sidebar:is(:hover, .open) .sidebar-nav li a .material-icons-outlined {
   width: auto;
   margin-left: 0;
 }
@@ -364,7 +364,7 @@ body.has-banner {
   transition: opacity 0.15s;
   font-size: 13px;
 }
-.sidebar:hover .nav-label {
+.sidebar:is(:hover, .open) .nav-label {
   opacity: 1;
 }
 
@@ -392,7 +392,7 @@ body.has-banner {
   z-index: 200;
   box-shadow: var(--shadow-md);
 }
-.sidebar:not(:hover) .sidebar-nav li a:hover::after {
+.sidebar:not(:is(:hover, .open)) .sidebar-nav li a:hover::after {
   opacity: 1;
 }
 
@@ -3304,70 +3304,6 @@ select.input-field {
   object-fit: contain;
 }
 
-/* ── AUTH: Role cards ────────────────────────────────────────────────────────── */
-.auth-role-cards {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin-bottom: 20px;
-}
-.auth-role-card {
-  border: 1.5px solid rgba(255,255,255,0.06);
-  border-radius: 18px;
-  padding: 22px 16px 18px;
-  text-align: left;
-  cursor: pointer;
-  background: var(--card);
-  transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
-  position: relative;
-  overflow: hidden;
-}
-.auth-role-card::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: 18px;
-  background: radial-gradient(circle at 50% 0%, rgba(232,66,10,0.08), transparent 70%);
-  opacity: 0;
-  transition: opacity 0.25s;
-}
-.auth-role-card:hover::before { opacity: 1; }
-.auth-role-card:hover {
-  border-color: var(--gold);
-  transform: translateY(-2px);
-}
-.auth-role-card.selected::before { opacity: 1; }
-.auth-role-card.selected {
-  border-color: var(--gold);
-  background: rgba(232,66,10,0.06);
-}
-.auth-role-icon {
-  width: 42px;
-  height: 42px;
-  background: rgba(232,66,10,0.12);
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 14px;
-}
-.auth-role-icon .material-icons-outlined {
-  font-size: 22px;
-  color: var(--gold);
-}
-.auth-role-label {
-  font-family: 'Outfit', sans-serif;
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--text);
-  margin-bottom: 4px;
-}
-.auth-role-sub {
-  font-size: 11px;
-  color: var(--muted);
-  line-height: 1.4;
-}
-
 /* ── AUTH: Expanded methods card ─────────────────────────────────────────────── */
 .auth-methods-card {
   border: 1.5px solid var(--border);
@@ -3569,18 +3505,7 @@ select.input-field {
   margin-bottom: 8px;
 }
 
-/* ── AUTH: Driver link ───────────────────────────────────────────────────────── */
-.auth-driver-link {
-  padding: 8px 20px 16px;
-  text-align: center;
-}
-
 /* ── Responsive ──────────────────────────────────────────────────────────────── */
-@media (max-width: 400px) {
-  .auth-role-cards { grid-template-columns: 1fr 1fr; gap: 10px; }
-  .auth-role-card  { padding: 18px 10px; }
-  .auth-role-label { font-size: 17px; }
-}
 #pwa-banner {
   position: fixed;
   bottom: 80px; /* above your bottom nav bar */
@@ -3719,5 +3644,50 @@ select.input-field {
 @media (min-width: 900px) {
   .admin-booking-card-editor {
     grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+  }
+}
+
+/* ══ ADMIN SIDEBAR TOGGLE ═══════════════════════════════════════════════════ */
+#admin-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.topbar-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.topbar-menu-btn:hover { background: rgba(201, 125, 58, 0.08); }
+.sidebar-backdrop { display: none; }
+@media (max-width: 900px) {
+  /* The generic rule above hides every sidebar on small screens; the admin one becomes an off-canvas drawer instead. */
+  #admin-sidebar {
+    display: flex !important;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: var(--sidebar-expanded);
+    overflow-y: auto;
+    transform: translateX(-100%);
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    z-index: 1001;
+  }
+  #admin-sidebar.open { transform: translateX(0); box-shadow: var(--shadow-md); }
+  .sidebar-backdrop.show {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 1000;
   }
 }

@@ -476,17 +476,13 @@ async function openRideModal(carId) {
       <input type="number" class="input-field" id="modal-duration" value="2" min="1" max="24">
     </div>
     <div class="input-group" style="position:relative">
-      <label style="display:flex;align-items:center;justify-content:space-between">
-        <span>Pickup Address</span>
-        <button id="locate-me-btn" onclick="autoFillPickup()" style="background:none;border:none;cursor:pointer;color:var(--gold);font-size:11px;display:flex;align-items:center;gap:3px;padding:0;font-family:inherit">
-          <span class="material-icons-outlined" style="font-size:13px">my_location</span> Use my location
-        </button>
-      </label>
+      <label>Pickup Address</label>
       <div class="addr-input-wrap">
         <span class="material-icons-outlined addr-search-icon">search</span>
         <input class="input-field addr-input-field" id="modal-pickup" placeholder="e.g. SPAR Marian Road, Calabar" autocomplete="off">
       </div>
       <div id="pickup-suggestions" class="address-suggestions"></div>
+      ${bkLocationControlsHTML()}
     </div>
     <div class="input-group" style="position:relative">
       <label>Drop-off Address</label>
@@ -518,27 +514,9 @@ async function openRideModal(carId) {
     });
   });
 
-  // Auto-fill pickup with geolocation
-  if (navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(async pos => {
-      try {
-        const { latitude: lat, longitude: lng } = pos.coords;
-        const label = await reverseGeocode(lng, lat);
-        const pickupInput = document.getElementById("modal-pickup");
-        if (pickupInput && label) {
-          pickupInput.value = label;
-          pickupInput.dataset.lat = lat;
-          pickupInput.dataset.lng = lng;
-          pickupInput.style.borderColor = "var(--gold)";
-          setTimeout(() => { if (pickupInput) pickupInput.style.borderColor = ""; }, 2000);
-          updateRidePreviewMap();
-        }
-      } catch(e) {}
-    }, () => {});
-  }
-
   // Init live preview map
-  initRidePreviewMap('${esc(c.city)}');
+  initRidePreviewMap(c.city);
+  bkInitLocationControls({ inputId: "modal-pickup", carCity: c.city, onChange: () => updateRidePreviewMap() });
 
   // Address autocomplete — on select, update the map immediately
   initAddressAutocomplete("modal-pickup", "pickup-suggestions", () => updateRidePreviewMap());
@@ -554,34 +532,8 @@ async function openRideModal(carId) {
   });
 }
 
-function autoFillPickup() {
-  const btn = document.getElementById("locate-me-btn");
-  if (btn) btn.innerHTML = `<span class="material-icons-outlined" style="font-size:13px;animation:spin 1s linear infinite">sync</span> Locating…`;
-  if (!navigator.geolocation) { showToast("Geolocation not supported","error"); return; }
-  navigator.geolocation.getCurrentPosition(async pos => {
-    try {
-      const { latitude: lat, longitude: lng } = pos.coords;
-      // Use Mapbox reverse geocoding (better Nigerian address labels than Nominatim)
-      const label = await reverseGeocode(lng, lat);
-      const pickupInput = document.getElementById("modal-pickup");
-      if (pickupInput && label) {
-        pickupInput.value = label;
-        pickupInput.dataset.lat = lat;
-        pickupInput.dataset.lng = lng;
-        pickupInput.style.borderColor = "var(--gold)";
-        setTimeout(() => { if (pickupInput) pickupInput.style.borderColor = ""; }, 2000);
-        updateRidePreviewMap();
-      }
-      if (btn) btn.innerHTML = `<span class="material-icons-outlined" style="font-size:13px">my_location</span> Use my location`;
-    } catch(e) {
-      showToast("Could not fetch location","error");
-      if (btn) btn.innerHTML = `<span class="material-icons-outlined" style="font-size:13px">my_location</span> Use my location`;
-    }
-  }, () => {
-    showToast("Location access denied","error");
-    if (btn) btn.innerHTML = `<span class="material-icons-outlined" style="font-size:13px">my_location</span> Use my location`;
-  });
-}
+// Kept for old callers: the same tap-only location helper as the "Use my current location" button.
+function autoFillPickup() { bkLocateClick(); }
 
 async function createRideBooking(carId, city) {
   const type       = (document.querySelector("input[name='modal-booking-type']:checked") || {}).value || "trip";
@@ -593,8 +545,8 @@ async function createRideBooking(carId, city) {
   if (!pickup) { showToast("Enter pickup address","error"); return; }
 
   // Coords stored by autocomplete on the input element as data-lat / data-lng
-  const pickupCoords  = (pickupEl.dataset.lat  && pickupEl.dataset.lng)  ? `${pickupEl.dataset.lat},${pickupEl.dataset.lng}`   : null;
-  const dropoffCoords = (dropoffEl.dataset.lat && dropoffEl.dataset.lng) ? `${dropoffEl.dataset.lat},${dropoffEl.dataset.lng}` : null;
+  const pickupCoords  = bkPickupCoords(pickupEl);    // null unless a real, in-range point was saved (GPS, map or search)
+  const dropoffCoords = bkPickupCoords(dropoffEl);
 
   const data = await api("/bookings.php?action=create","POST",{
     car_id:carId, booking_type:type, pickup_address:pickup,
@@ -1139,31 +1091,24 @@ async function saveProfile() {
 let ridePreviewMap   = null;
 let ridePreviewPinP  = null;
 let ridePreviewPinD  = null;
-let ridePreviewRoute = null;
 
-function initRidePreviewMap(city) {
+// The preview needs Mapbox. With Mapbox off no map is drawn and the typed address (plus any saved GPS point) is used.
+async function initRidePreviewMap(city) {
   const container = document.getElementById("ride-booking-map");
   if (!container) return;
   if (ridePreviewMap) { ridePreviewMap.remove(); ridePreviewMap = null; }
-
-  const cityKey = (city || "Calabar").toUpperCase();
-  const center  = (typeof BOOKKAM_COORDS !== "undefined" && BOOKKAM_COORDS[cityKey])
-    ? BOOKKAM_COORDS[cityKey] : [4.9517, 8.3220];
-
-  ridePreviewMap = L.map("ride-booking-map", {
-    center, zoom: 13,
-    zoomControl: false,
-    attributionControl: false,
-    dragging: true,
-    scrollWheelZoom: false,
-  });
-
-  const theme = document.documentElement.getAttribute("data-theme") || "dark";
-  const tile  = theme === "dark"
-    ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-    : "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
-  L.tileLayer(tile, { maxZoom: 19 }).addTo(ridePreviewMap);
-  L.control.zoom({ position: "bottomright" }).addTo(ridePreviewMap);
+  const ok = await loadMapbox();
+  if (document.getElementById("ride-booking-map") !== container) return;     // the modal was closed meanwhile
+  if (!ok) {
+    container.style.display = "none";
+    const st = document.getElementById("ride-map-status"); if (st) st.style.position = "static";
+    updateRidePreviewMap();
+    return;
+  }
+  const center = BOOKKAM_COORDS[String(city || "Calabar").toUpperCase()] || BOOKKAM_COORDS.DEFAULT;
+  ridePreviewMap = new mapboxgl.Map({ container: "ride-booking-map", style: getMapStyle(), center, zoom: 13 });
+  ridePreviewMap.addControl(new mapboxgl.NavigationControl(), "bottom-right");
+  updateRidePreviewMap();
 }
 
 function setRideMapStatus(text, type) {
@@ -1171,19 +1116,19 @@ function setRideMapStatus(text, type) {
   const wrap = document.getElementById("ride-map-status");
   if (!el || !wrap) return;
   el.textContent = text;
-  const colors = { info: "var(--muted)", ok: "var(--green)", error: "var(--red)", loading: "var(--gold)" };
+  const colors = { info: "var(--muted)", ok: "var(--green)", manual: "var(--muted)", error: "var(--red)", loading: "var(--gold)" };
   wrap.style.color = colors[type] || "var(--muted)";
   // Swap icon
   const icon = wrap.querySelector(".material-icons-outlined");
   if (icon) {
-    const icons = { info: "info", ok: "check_circle", error: "location_off", loading: "sync" };
+    const icons = { info: "info", ok: "check_circle", manual: "edit_location", error: "location_off", loading: "sync" };
     icon.textContent = icons[type] || "info";
     icon.style.animation = type === "loading" ? "spin 1s linear infinite" : "none";
   }
   // Enable Book button only when pickup is confirmed on the map
   const btn = document.getElementById("ride-book-btn");
   if (btn) {
-    const ready = (type === "ok");
+    const ready = (type === "ok" || type === "manual");   // "manual": Mapbox is off, the typed address is used
     btn.disabled = !ready;
     btn.style.opacity  = ready ? "1"            : "0.5";
     btn.style.cursor   = ready ? "pointer"       : "not-allowed";
@@ -1209,83 +1154,40 @@ async function resolveCoords(inputEl) {
 }
 
 async function updateRidePreviewMap() {
-  if (!ridePreviewMap) return;
-
   const pickupEl  = document.getElementById("modal-pickup");
   const dropoffEl = document.getElementById("modal-dropoff");
   if (!pickupEl) return;
+  const text = pickupEl.value.trim();
 
-  setRideMapStatus("Locating addresses…", "loading");
-
-  const pickup  = await resolveCoords(pickupEl);
-  const dropoff = dropoffEl && dropoffEl.value.trim().length >= 3
-    ? await resolveCoords(dropoffEl) : null;
-
-  // Clear old layers
-  if (ridePreviewPinP)  { ridePreviewMap.removeLayer(ridePreviewPinP);  ridePreviewPinP  = null; }
-  if (ridePreviewPinD)  { ridePreviewMap.removeLayer(ridePreviewPinD);  ridePreviewPinD  = null; }
-  if (ridePreviewRoute) { ridePreviewMap.removeLayer(ridePreviewRoute); ridePreviewRoute = null; }
-
-  if (!pickup) {
-    const hasText = pickupEl.value.trim().length >= 3;
-    pickupEl.style.borderColor = hasText ? "var(--red)" : "";
-    setRideMapStatus(hasText ? "Pickup address not found — try a different name" : "Enter pickup address", hasText ? "error" : "info");
+  if (!(mapboxAvailable() && ridePreviewMap)) {      // Mapbox off: no search, no preview; the typed address is the pickup
+    if (text.length >= 3) setRideMapStatus(bkPickupCoords(pickupEl) ? "Pickup point saved. Map preview is not available yet." : "Map search is not available yet. We will use the address you typed.", "manual");
+    else setRideMapStatus("Enter pickup address", "info");
     return;
   }
 
+  setRideMapStatus("Locating addresses...", "loading");
+  const pickup  = await resolveCoords(pickupEl);
+  const dropoff = dropoffEl && dropoffEl.value.trim().length >= 3 ? await resolveCoords(dropoffEl) : null;
+  if (ridePreviewPinP) { ridePreviewPinP.remove(); ridePreviewPinP = null; }
+  if (ridePreviewPinD) { ridePreviewPinD.remove(); ridePreviewPinD = null; }
+
+  if (!pickup) {
+    pickupEl.style.borderColor = text.length >= 3 ? "var(--red)" : "";
+    setRideMapStatus(text.length >= 3 ? "Pickup address not found - try a different name" : "Enter pickup address", text.length >= 3 ? "error" : "info");
+    return;
+  }
   pickupEl.style.borderColor = "var(--gold)";
-
-  const pinIcon = (iconName, color) => L.divIcon({
-    className: "bk-marker",
-    html: `<span class="material-icons-outlined" style="font-size:26px;color:${esc(color)};filter:drop-shadow(0 2px 8px rgba(0,0,0,0.7))">${iconName}</span>`,
-    iconSize: [26, 26], iconAnchor: [13, 26], popupAnchor: [0, -26]
-  });
-
-  ridePreviewPinP = L.marker([pickup.lat, pickup.lng], { icon: pinIcon("my_location", "var(--cyan)") })
-    .addTo(ridePreviewMap)
-    .bindPopup(`<b>Pickup</b><br>${pickupEl.value.trim()}`);
+  ridePreviewPinP = new mapboxgl.Marker({ element: makeMarkerEl("my_location", "var(--cyan)") }).setLngLat([pickup.lng, pickup.lat]).addTo(ridePreviewMap);
 
   if (dropoff) {
     if (dropoffEl) dropoffEl.style.borderColor = "var(--gold)";
-
-    ridePreviewPinD = L.marker([dropoff.lat, dropoff.lng], { icon: pinIcon("location_on", "var(--gold)") })
-      .addTo(ridePreviewMap)
-      .bindPopup(`<b>Drop-off</b><br>${dropoffEl.value.trim()}`);
-
-    // Fit both pins in view
-    ridePreviewMap.fitBounds(
-      L.latLngBounds([[pickup.lat, pickup.lng], [dropoff.lat, dropoff.lng]]),
-      { padding: [40, 40] }
-    );
-
-    // Draw route via OSRM
-    try {
-      const url  = `https://router.project-osrm.org/route/v1/driving/${pickup.lng},${pickup.lat};${dropoff.lng},${dropoff.lat}?overview=full&geometries=geojson`;
-      const res  = await fetch(url);
-      const data = await res.json();
-      if (data.routes && data.routes.length) {
-        ridePreviewRoute = L.geoJSON(data.routes[0].geometry, {
-          style: { color: "var(--gold)", weight: 3, opacity: 0.85, dashArray: "6,4" }
-        }).addTo(ridePreviewMap);
-        ridePreviewMap.fitBounds(ridePreviewRoute.getBounds(), { padding: [40, 40] });
-        const dist = (data.routes[0].distance / 1000).toFixed(1);
-        const mins = Math.round(data.routes[0].duration / 60);
-        setRideMapStatus(`Route found · ${dist} km · ~${mins} min`, "ok");
-      } else {
-        setRideMapStatus("Route could not be calculated", "error");
-      }
-    } catch(e) {
-      setRideMapStatus("Pickup and drop-off pinned", "ok");
-    }
+    ridePreviewPinD = new mapboxgl.Marker({ element: makeMarkerEl("location_on", "var(--gold)") }).setLngLat([dropoff.lng, dropoff.lat]).addTo(ridePreviewMap);
+    const r = await drawRoute(ridePreviewMap, [pickup.lng, pickup.lat], [dropoff.lng, dropoff.lat]);
+    setRideMapStatus(r ? `Route found - ${(r.distance / 1000).toFixed(1)} km - about ${Math.round(r.duration / 60)} min` : "Pickup and drop-off pinned", "ok");
   } else {
-    // Only pickup — centre on it
-    ridePreviewMap.setView([pickup.lat, pickup.lng], 15);
-    if (dropoffEl && dropoffEl.value.trim().length >= 3) {
-      dropoffEl.style.borderColor = "var(--red)";
-      setRideMapStatus("Drop-off address not found — try a different name", "error");
-    } else {
-      setRideMapStatus("Pickup pinned · enter drop-off to see route", "ok");
-    }
+    ridePreviewMap.flyTo({ center: [pickup.lng, pickup.lat], zoom: 15 });
+    if (dropoffEl && dropoffEl.value.trim().length >= 3) { dropoffEl.style.borderColor = "var(--red)"; setRideMapStatus("Drop-off address not found - try a different name", "error"); }
+    else setRideMapStatus("Pickup pinned - enter drop-off to see route", "ok");
   }
 }
 

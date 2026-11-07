@@ -36,16 +36,36 @@ jobs:
       - name: JavaScript syntax check
         run: |
           set -e
-          for f in api/js/*.js api/sw.js tests/functional/esc.test.js; do node --check "$f"; done
+          for f in api/js/*.js api/sw.js tests/functional/*.js; do node --check "$f"; done
 
       - name: Python syntax check
-        run: python -m py_compile tests/functional/run_tests.py
+        run: python -m py_compile tests/functional/*.py
 
       - name: Payment provider contract tests
         run: php tests/payment-provider-contract.php
 
+      - name: OPay adapter contract (known-answer signatures, hosts, URL policy)
+        run: php tests/opay-adapter-contract.php
+
       - name: Functional tests (SQLite stand-in, local PHP servers)
         run: python tests/functional/run_tests.py
+
+      - name: OPay adapter, callbacks, refunds, reconciliation against a FAKE local OPay server (never the real one)
+        run: python tests/functional/opay_tests.py
+
+      - name: Admin switches, driver-location privacy, admin 2FA, SQL injection, response hygiene (SQLite stand-in)
+        run: python tests/functional/admin_security_tests.py
+
+      - name: E-mail auth tests (SQLite stand-in)
+        run: python tests/functional/email_auth_tests.py
+
+      - name: Front-end tests (stubbed DOM, no browser)
+        run: |
+          set -e
+          node tests/functional/auth_frontend.test.js
+          node tests/functional/admin_frontend.test.js
+          node tests/functional/location_frontend.test.js
+          node tests/functional/esc.test.js api/js/utils.js
 
   mysql-migrations:
     name: Payment migrations on MySQL 8
@@ -67,3 +87,36 @@ jobs:
           MYSQL_USER: root
           MYSQL_PWD: root
         run: bash tests/migrations/run_migration_test.sh
+
+  mysql-auth-tests:
+    name: E-mail auth + admin 2FA + migrations 008-010 on MySQL 8
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: pdo, pdo_mysql, curl, mbstring, openssl
+          coverage: none
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: email_auth_tests.py against real MySQL (applies 008, 009, 010 to legacy rows)
+        env:
+          BK_BACKEND: mysql
+          BK_MYSQL_HOST: 127.0.0.1
+          BK_MYSQL_PORT: "3306"
+          BK_MYSQL_ADMIN_USER: root
+          BK_MYSQL_ADMIN_PASS: root
+          BK_MYSQL_APP_USER: bk_app
+          BK_MYSQL_APP_PASS: ci-only-throwaway-password
+        run: python tests/functional/email_auth_tests.py

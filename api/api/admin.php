@@ -1,6 +1,9 @@
 <?php
 require_once "../config/db.php";
 require_once "../config/config.php";
+require_once "../config/security.php";
+require_once "../services/Mailer.php";
+require_once "../services/AccountMail.php";
 apiHeaders();
 
 $input  = json_decode(file_get_contents("php://input"), true) ?? [];
@@ -296,8 +299,21 @@ switch ($action) {
         if (!$user) respondError("Unauthorised", 401);
         $name=$input["name"]??""; $state=$input["state"]??"";
         if (!$name||!$state) respondError("name and state required");
-        $pdo->prepare("INSERT INTO cities (name,state,is_active) VALUES (?,?,1)")->execute([$name,$state]);
-        respond(["success"=>true,"id"=>$reportId]);
+        $pdo->prepare("INSERT INTO cities (name,state,is_active) VALUES (?,?,1)")->execute([cleanText($name,80),cleanText($state,80)]);
+        respond(["success"=>true,"id"=>(int)$pdo->lastInsertId()]);
+    }
+
+    case "toggle_city": {
+        // Admin only (default-deny guard above). Flips cities.is_active; the admin UI shows Enable/Disable from the result.
+        $rawId = $input["city_id"] ?? null;     // a real integer or digits only: (int)[...] would silently become 1
+        if (!(is_int($rawId) || (is_string($rawId) && ctype_digit($rawId))) || (int)$rawId <= 0) respondError("city_id required");
+        $cityId = (int)$rawId;
+        $s = $pdo->prepare("SELECT is_active FROM cities WHERE id=?"); $s->execute([$cityId]);
+        $row = $s->fetch();
+        if (!$row) respondError("City not found", 404);
+        $newState = ((int)$row["is_active"]) ? 0 : 1;
+        $pdo->prepare("UPDATE cities SET is_active=? WHERE id=?")->execute([$newState, $cityId]);
+        respond(["success"=>true, "id"=>$cityId, "is_active"=>$newState]);
     }
 
     case "update_pricing": {
@@ -342,6 +358,42 @@ switch ($action) {
         if ($flaggedOnly) $sql .= " WHERE (SELECT COUNT(*) FROM messages WHERE booking_id=m.booking_id AND is_flagged=1)>0";
         $sql .= " ORDER BY last_at DESC LIMIT 50";
         respond(["conversations"=>$pdo->query($sql)->fetchAll()]);
+    }
+
+    // Admin-assisted recovery: gives a customer/driver who can no longer sign in (e.g. a phone-only account from before
+    // phone OTP was removed) an email address and sends them a single-use "choose a password" link. The admin must have
+    // confirmed the person's identity out of band. The link is only ever e-mailed, never returned in the response.
+    case "issue_account_recovery": {
+        $targetId = (int)($input["user_id"] ?? 0);
+        $email    = normalizeEmail($input["email"] ?? "");
+        if (!$targetId || !$email) respondError("user_id and a valid email are required");
+        $s = $pdo->prepare("SELECT * FROM users WHERE id=?");
+        $s->execute([$targetId]);
+        $target = $s->fetch();
+        if (!$target || $target["role"] === "admin") respondError("User not found", 404);
+        $dup = $pdo->prepare("SELECT id FROM users WHERE LOWER(email)=? AND id<>? LIMIT 1");
+        $dup->execute([$email, $targetId]);
+        if ($dup->fetch()) respondError("That email address belongs to another account", 409);
+        $pdo->prepare("UPDATE users SET email=? WHERE id=?")->execute([$email, $targetId]);
+        $target["email"] = $email;
+        $sent = sendResetEmail($pdo, $target, 24 * 3600);
+        error_log("BOOKKAM admin #" . $user["id"] . " issued account recovery for user #" . $targetId . " (email sent: " . ($sent ? "yes" : "no") . ")");
+        respond(["success" => true, "emailed" => $sent]);
+    }
+
+    // ON/OFF switches. Admin-only (the default-deny gate above); an admin can always reach these to turn things back on.
+    case "get_app_settings": {
+        respond(["bookings_enabled" => appSettingOn($pdo, "bookings_enabled"), "payments_enabled" => appSettingOn($pdo, "payments_enabled"),
+                 "mapbox_enabled" => MAPBOX_ENABLED]);
+    }
+    case "set_app_setting": {
+        $key = (string)($input["key"] ?? "");
+        if (!in_array($key, APP_SETTING_KEYS, true)) respondError("Unknown setting");
+        if (!array_key_exists("enabled", $input) || !is_bool($input["enabled"])) respondError("enabled must be true or false");
+        try { setAppSetting($pdo, $key, $input["enabled"], (int)$user["id"]); }
+        catch (Throwable $e) { error_log("BOOKKAM set_app_setting failed (apply migrations/010): " . $e->getMessage()); respondError("Could not save the setting. Has migration 010 been applied?", 500); }
+        error_log("BOOKKAM admin #" . $user["id"] . " set " . $key . " = " . ($input["enabled"] ? "ON" : "OFF"));
+        respond(["success" => true, "key" => $key, "enabled" => $input["enabled"]]);
     }
 
     default: respondError("Invalid action");

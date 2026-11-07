@@ -25,6 +25,14 @@ $pickupLng = $input["pickup_lng"] ?? null;
 $pickupLat = $input["pickup_lat"] ?? null;
 
 if (!$eventKey || !$eventName) respondError("Event is required");
+requireBookingsOpen($pdo);
+// An event an admin has hidden ("Show this card on home screen" off) cannot be booked either.
+try {
+    $vis = $pdo->prepare("SELECT is_active FROM home_booking_cards WHERE event_key=? LIMIT 1");
+    $vis->execute([$eventKey]);
+    $visRow = $vis->fetch();
+    if ($visRow && (int)$visRow["is_active"] === 0) respondError("This event is not available for booking", 403);
+} catch (PDOException $e) { /* table absent in very old installs: nothing to enforce */ }
 if (!$pickup || !$dropoff || !$zoneLabel) respondError("Pickup, drop-off, and pickup zone are required");
 if (!$date || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) respondError("Valid event date is required");
 if (!$time || !preg_match('/^\d{2}:\d{2}$/', $time)) respondError("Valid pickup time is required");

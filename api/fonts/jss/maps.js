@@ -1,5 +1,5 @@
 // ── MAPS.JS — Mapbox GL JS ────────────────────────────────────────────────────
-const MAPBOX_TOKEN = "pk.eyJ1IjoiYm9va2thbSIsImEiOiJjbW5uYXRyaXYxZm9lMnByNjc1OHNycG5vIn0.zUAwUDojhM0ROm2l58J4kg";
+const MAPBOX_TOKEN = ""; // token removed: this stale copy is not loaded by the app (see js/maps.js)
 mapboxgl.accessToken = MAPBOX_TOKEN;
 
 const BOOKKAM_COORDS = {

@@ -573,7 +573,7 @@ async function loadDriverChatMessages() {
   el.innerHTML = msgs.map(m => {
     const isMe = m.sender_id === currentUser.id;
     return `<div class="chat-msg ${isMe?"chat-msg-me":"chat-msg-them"}">
-      <div class="chat-bubble ${m.is_flagged?"chat-flagged":""}">${m.message_text}</div>
+      <div class="chat-bubble ${m.is_flagged?"chat-flagged":""}">${esc(m.message_text)}</div>
       <div class="chat-time">${fmtTime(m.created_at)}</div>
     </div>`;
   }).join("");

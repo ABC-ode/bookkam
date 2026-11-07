@@ -1,81 +1,44 @@
 // ── AUTH.JS ───────────────────────────────────────────────────────────────────
 // Google Client ID — replace with your actual client ID
 const GOOGLE_CLIENT_ID = "506985141783-svn9ilskpk1et5sr6tedv7vkg2vlio53.apps.googleusercontent.com";
-// Apple Service ID — replace with your actual service ID
-const APPLE_SERVICE_ID  = "YOUR_APPLE_SERVICE_ID";
-const APPLE_REDIRECT    = "https://bookkam.com/api/auth.php?action=apple_callback";
 
-let selectedRole    = null; // "customer" | "driver"
-let otpUserId       = null;
 let countdownTimer  = null;
-let activeMethod    = null; // "phone" | "email" | "google" | "apple"
-let pendingSocial   = null; // holds {google_id/apple_id, email, name, photo, role} while city picker shown
+let activeMethod    = null; // "email" | "google"
+let registrationRole = "customer";
+let pendingSocial   = null; // holds {pending_token, email, name, photo, role} while the city picker is shown
 
 // ── Cities list ───────────────────────────────────────────────────────────────
 const CITIES = ["Calabar","Ikom","Obudu","Ogoja","Uyo","Port Harcourt","Abuja","Lagos"];
 
 // ── Main render ───────────────────────────────────────────────────────────────
+// One sign-in screen for everybody. Sign-in is role-agnostic (the server answers with the account's own role and
+// handleAuthSuccess routes to the right dashboard), so drivers sign in here too. Driver applications start
+// from the separate "Want to be a driver?" action below.
 function renderAuthLogin() {
-  selectedRole   = "customer";
-  otpUserId      = null;
   activeMethod   = null;
+  registrationRole = "customer";
   pendingSocial  = null;
   if (countdownTimer) clearInterval(countdownTimer);
 
   document.getElementById("auth-content").innerHTML = `
-    <div class="auth-role-cards">
-
-      <div class="auth-role-card" id="role-card-customer" onclick="expandRole('customer')">
-        <div class="auth-role-icon">
-          <span class="material-icons-outlined">person_outline</span>
-        </div>
-        <div class="auth-role-label">Customer</div>
-        <div class="auth-role-sub">I want to book a car</div>
-      </div>
-
-      <div class="auth-role-card" id="role-card-driver" onclick="expandRole('driver')">
-        <div class="auth-role-icon">
-          <span class="material-icons-outlined">directions_car</span>
-        </div>
-        <div class="auth-role-label">Driver</div>
-        <div class="auth-role-sub">I want to drive</div>
-      </div>
-
-    </div>
-
     <div id="auth-expanded-area"></div>
   `;
 
-  expandRole("customer");
+  renderAuthMethods();
 }
 
-// ── Expand a role card ────────────────────────────────────────────────────────
-function expandRole(role) {
-  selectedRole = role;
+function renderAuthMethods() {
   activeMethod = null;
-
-  // Highlight selected card
-  document.getElementById("role-card-customer").classList.toggle("selected", role === "customer");
-  document.getElementById("role-card-driver").classList.toggle("selected",   role === "driver");
-
-  const isCustomer = role === "customer";
 
   document.getElementById("auth-expanded-area").innerHTML = `
     <div class="auth-methods-card" id="auth-methods-card">
 
       <div class="auth-methods-header">
-        <span class="material-icons-outlined">${isCustomer ? "person_outline" : "directions_car"}</span>
-        <span>${isCustomer ? "Customer" : "Driver"} Login</span>
-        <button class="auth-collapse-btn" onclick="collapseRole()">
-          <span class="material-icons-outlined">keyboard_arrow_up</span>
-        </button>
+        <span class="material-icons-outlined">person_outline</span>
+        <span>Sign in or create an account</span>
       </div>
 
       <div class="auth-method-btns">
-        <button class="auth-method-btn" id="method-btn-phone" onclick="selectMethod('phone')">
-          <span class="material-icons-outlined">smartphone</span>
-          Continue with Phone
-        </button>
         <button class="auth-method-btn" id="method-btn-email" onclick="selectMethod('email')">
           <span class="material-icons-outlined">mail_outline</span>
           Continue with Email
@@ -89,35 +52,23 @@ function expandRole(role) {
           </svg>
           Continue with Google
         </button>
-        <button class="auth-method-btn auth-method-apple" id="method-btn-apple" onclick="startAppleLogin()">
-          <svg width="18" height="18" viewBox="0 0 814 1000" style="flex-shrink:0;fill:currentColor">
-            <path d="M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 202.2-.6 3.2-20.7 71.9-68.7 141.9-42.8 61.6-87.5 123.1-155.5 123.1s-85.5-39.5-164-39.5c-76 0-103.7 40.8-165.9 40.8s-105-37.5-155.5-127.4C46 790.9 0 694.5 0 601.8c0-156.2 102.9-238.6 204-238.6 52.7 0 96.5 34.5 129.7 34.5 31.8 0 81.5-36.9 143.8-36.9 22.4 0 108.3 2 172.5 79.9zm-248.1-180.8c31.1-36.9 53.1-88.1 53.1-139.3 0-7.1-.6-14.3-1.9-20.1-50.6 1.9-110.8 33.7-147.1 75.8-28.5 32.4-55.1 83.6-55.1 135.5 0 7.8 1.3 15.6 1.9 18.1 3.2.6 8.4 1.3 13.6 1.3 45.4 0 102.5-30.4 135.5-71.3z"/>
-          </svg>
-          Continue with Apple
+
+        <button class="auth-method-btn" type="button" disabled aria-disabled="true" title="Apple Sign-In will be available after BOOKKAM completes Apple developer setup" style="opacity:.5;cursor:not-allowed">
+          <span class="material-icons-outlined">phone_iphone</span>
+          Continue with Apple <span style="font-size:11px;margin-left:auto">Coming soon</span>
         </button>
 
-        ${isCustomer ? `
         <div class="auth-divider"><span>or</span></div>
         <button class="auth-method-btn auth-method-guest" onclick="browseAsGuest()">
           <span class="material-icons-outlined">visibility</span>
           Browse as Guest
         </button>
-        ` : ""}
       </div>
 
       <div id="auth-method-form"></div>
-
-      ${isCustomer ? `
-      <div class="auth-driver-link">
-        <button class="btn btn-ghost" style="font-size:12px;color:var(--muted)" onclick="expandRole('driver')">
-          Want to be a driver? →
-        </button>
-      </div>` : `
-      <div class="auth-driver-link">
-        <button class="btn btn-ghost" style="font-size:12px;color:var(--muted)" onclick="expandRole('customer')">
-          ← Back to Customer
-        </button>
-      </div>`}
+      <div class="auth-driver-link" style="text-align:center;margin-top:14px">
+        <button class="btn btn-ghost" type="button" style="font-size:13px;color:var(--muted)" onclick="startDriverApplication()">Want to be a driver? Apply here</button>
+      </div>
 
     </div>
   `;
@@ -129,14 +80,6 @@ function expandRole(role) {
   });
 }
 
-function collapseRole() {
-  selectedRole = null;
-  activeMethod = null;
-  document.getElementById("role-card-customer").classList.remove("selected");
-  document.getElementById("role-card-driver").classList.remove("selected");
-  document.getElementById("auth-expanded-area").innerHTML = "";
-}
-
 // ── Select login method ───────────────────────────────────────────────────────
 function selectMethod(method) {
   activeMethod = method;
@@ -146,63 +89,19 @@ function selectMethod(method) {
   const btn = document.getElementById("method-btn-" + method);
   if (btn) btn.classList.add("active");
 
-  if (method === "phone") renderPhoneForm();
   if (method === "email") renderEmailForm("login");
 }
 
-// ── Phone OTP form ────────────────────────────────────────────────────────────
-function renderPhoneForm() {
-  document.getElementById("auth-method-form").innerHTML = `
-    <div class="auth-form-slide">
-      <div class="input-group">
-        <label>Phone Number</label>
-        <div class="phone-input-wrap">
-          <span class="phone-prefix">+234</span>
-          <input class="input-field phone-input" id="login-phone" type="tel"
-            placeholder="8012345678" inputmode="numeric" maxlength="11"
-            onkeypress="if(event.key==='Enter') sendOTP()">
-        </div>
-      </div>
-      <label class="auth-remember-label">
-        <input type="checkbox" id="phone-remember"> Remember me for 7 days
-      </label>
-      <button class="btn btn-gold btn-full" onclick="sendOTP()">
-        <span class="material-icons-outlined">arrow_forward</span> Send OTP
-      </button>
-      <button class="btn btn-ghost btn-full auth-close-btn" onclick="closeMethodForm()">
-        <span class="material-icons-outlined">close</span> Close
-      </button>
-    </div>
-  `;
-  setTimeout(() => document.getElementById("login-phone")?.focus(), 100);
-}
-
-function renderOTPForm() {
-  document.getElementById("auth-method-form").innerHTML = `
-    <div class="auth-form-slide">
-      <p class="auth-otp-hint">Enter the 6-digit code sent to your number</p>
-      <div class="otp-boxes" id="otp-boxes">
-        ${Array(6).fill('<input class="otp-box" type="tel" maxlength="1" inputmode="numeric">').join("")}
-      </div>
-      <p id="otp-error" class="auth-otp-error"></p>
-      <button class="btn btn-gold btn-full" style="margin-top:12px" onclick="verifyOTP()">
-        <span class="material-icons-outlined">check_circle</span> Verify
-      </button>
-      <div class="auth-otp-resend">
-        <span id="otp-countdown" style="color:var(--muted);font-size:12px"></span>
-        <button id="resend-btn" class="btn btn-ghost" style="display:none;font-size:12px" onclick="sendOTP(true)">Resend OTP</button>
-      </div>
-      <button class="btn btn-ghost btn-full" style="margin-top:8px" onclick="renderPhoneForm()">
-        <span class="material-icons-outlined">arrow_back</span> Back
-      </button>
-    </div>
-  `;
-  initOTPBoxes();
-  setTimeout(() => document.querySelector(".otp-box")?.focus(), 100);
+// ── Driver application entry point ───────────────────────────────────────────
+function startDriverApplication() {
+  registrationRole = "driver";
+  selectMethod("email");
+  renderEmailForm("register", "driver");
 }
 
 // ── Email form ────────────────────────────────────────────────────────────────
-function renderEmailForm(tab = "login") {
+function renderEmailForm(tab = "login", role = registrationRole) {
+  registrationRole = role === "driver" ? "driver" : "customer";
   const loginActive    = tab === "login"    ? "active" : "";
   const registerActive = tab === "register" ? "active" : "";
 
@@ -210,7 +109,7 @@ function renderEmailForm(tab = "login") {
     <div class="auth-form-slide">
       <div class="auth-email-tabs">
         <button class="auth-tab ${loginActive}"    onclick="renderEmailForm('login')">Login</button>
-        <button class="auth-tab ${registerActive}" onclick="renderEmailForm('register')">Register</button>
+        <button class="auth-tab ${registerActive}" onclick="renderEmailForm('register', 'customer')">Register</button>
       </div>
 
       ${tab === "login" ? `
@@ -235,6 +134,7 @@ function renderEmailForm(tab = "login") {
         <button class="btn btn-gold btn-full" onclick="submitEmailLogin()">
           <span class="material-icons-outlined">login</span> Login
         </button>
+        <button class="btn btn-ghost btn-full" onclick="renderForgotForm()">Forgot password?</button>
       ` : `
         <div class="input-group">
           <label>Full Name</label>
@@ -247,7 +147,7 @@ function renderEmailForm(tab = "login") {
         <div class="input-group">
           <label>Password</label>
           <div class="password-wrap">
-            <input type="password" id="reg-pass" class="input-field" placeholder="Min 6 characters">
+            <input type="password" id="reg-pass" class="input-field" placeholder="At least 8 characters">
             <button class="password-toggle" onclick="togglePassword('reg-pass')">
               <span class="material-icons-outlined">visibility</span>
             </button>
@@ -268,6 +168,7 @@ function renderEmailForm(tab = "login") {
             ${CITIES.map(c => `<option value="${c}">${c}</option>`).join("")}
           </select>
         </div>
+        ${registrationRole === "driver" ? '<p class="auth-welcome-msg">Driver application</p>' : ''}
         <button class="btn btn-gold btn-full" onclick="submitEmailRegister()">
           <span class="material-icons-outlined">person_add</span> Create Account
         </button>
@@ -281,7 +182,7 @@ function renderEmailForm(tab = "login") {
   setTimeout(() => document.querySelector(".auth-form-slide input")?.focus(), 100);
 }
 
-// ── City picker (after Google/Apple first login) ───────────────────────────────
+// ── City picker (after Google first login) ───────────────────────────────
 function renderCityPicker(displayName) {
   document.getElementById("auth-method-form").innerHTML = `
     <div class="auth-form-slide auth-city-picker">
@@ -316,78 +217,6 @@ function togglePassword(id) {
   if (btn) btn.textContent = input.type === "password" ? "visibility" : "visibility_off";
 }
 
-// ── OTP boxes ─────────────────────────────────────────────────────────────────
-function initOTPBoxes() {
-  const boxes = [...document.querySelectorAll(".otp-box")];
-  boxes.forEach((box, i) => {
-    box.addEventListener("input", e => {
-      if (e.target.value) { if (i < 5) boxes[i + 1].focus(); }
-      if (boxes.every(b => b.value)) verifyOTP();
-    });
-    box.addEventListener("keydown", e => {
-      if (e.key === "Backspace" && !e.target.value && i > 0) boxes[i - 1].focus();
-    });
-    box.addEventListener("paste", e => {
-      const text = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
-      text.split("").forEach((c, j) => { if (boxes[j]) boxes[j].value = c; });
-      boxes[Math.min(text.length, 5)].focus();
-      e.preventDefault();
-    });
-  });
-}
-
-// ── Send OTP ──────────────────────────────────────────────────────────────────
-async function sendOTP(resend = false) {
-  let phone = document.getElementById("login-phone")?.value?.trim();
-  if (!phone || phone.length < 10) { showToast("Enter a valid phone number", "error"); return; }
-
-  // Normalise: strip leading 0 so we don't double the country code in the DB.
-  // User types: 08012345678 → we store: 2348012345678
-  if (phone.startsWith("0")) phone = phone.slice(1);
-  const fullPhone = "234" + phone;
-
-  const data = await api("/auth.php?action=send_otp", "POST", { phone: fullPhone, role: selectedRole });
-  if (data.error) { showToast(data.error, "error"); return; }
-
-  otpUserId = data.user_id;
-  renderOTPForm();
-  showToast(resend ? "New OTP sent!" : "OTP sent!", "success");
-
-  // Countdown
-  let secs = 60;
-  const countdown = document.getElementById("otp-countdown");
-  const resendBtn = document.getElementById("resend-btn");
-  if (countdownTimer) clearInterval(countdownTimer);
-  if (resendBtn) resendBtn.style.display = "none";
-  countdownTimer = setInterval(() => {
-    secs--;
-    if (countdown) countdown.textContent = `Resend in ${secs}s`;
-    if (secs <= 0) {
-      clearInterval(countdownTimer);
-      if (countdown) countdown.textContent = "";
-      if (resendBtn) resendBtn.style.display = "inline-block";
-    }
-  }, 1000);
-}
-
-// ── Verify OTP ────────────────────────────────────────────────────────────────
-async function verifyOTP() {
-  const boxes      = [...document.querySelectorAll(".otp-box")];
-  const otp        = boxes.map(b => b.value).join("");
-  const rememberMe = !!document.getElementById("phone-remember")?.checked;
-  if (otp.length < 6) { showToast("Enter all 6 digits", "error"); return; }
-
-  const data = await api("/auth.php?action=verify_otp", "POST", { user_id: otpUserId, otp, remember_me: rememberMe });
-  if (data.error) {
-    boxes.forEach(b => b.classList.add("shake"));
-    setTimeout(() => boxes.forEach(b => b.classList.remove("shake")), 400);
-    document.getElementById("otp-error").textContent = data.error;
-    return;
-  }
-
-  handleAuthSuccess(data);
-}
-
 // ── Email login ───────────────────────────────────────────────────────────────
 async function submitEmailLogin() {
   const email      = document.getElementById("email-login-email")?.value?.trim();
@@ -397,6 +226,7 @@ async function submitEmailLogin() {
   if (!email || !password) { showToast("Enter email and password", "error"); return; }
 
   const data = await api("/auth.php?action=login_email", "POST", { email, password, remember_me: rememberMe });
+  if (data.code === "email_unverified") { renderEmailSent(email, true); return; }
   if (data.error) { showToast(data.error, "error"); return; }
 
   handleAuthSuccess(data);
@@ -409,18 +239,121 @@ async function submitEmailRegister() {
   const pass    = document.getElementById("reg-pass")?.value;
   const confirm = document.getElementById("reg-confirm")?.value;
   const city    = document.getElementById("reg-city")?.value;
+  const role    = registrationRole;
 
   if (!name)            { showToast("Enter your full name", "error"); return; }
   if (!email)           { showToast("Enter your email", "error"); return; }
   if (!pass)            { showToast("Enter a password", "error"); return; }
+  if (pass.length < 8)  { showToast("Password must be at least 8 characters", "error"); return; }
   if (pass !== confirm) { showToast("Passwords do not match", "error"); return; }
 
   const data = await api("/auth.php?action=register_email", "POST", {
-    name, email, password: pass, confirm, role: selectedRole, city
+    name, email, password: pass, confirm, role, city
   });
   if (data.error) { showToast(data.error, "error"); return; }
 
-  handleAuthSuccess(data);
+  renderEmailSent(email, false);   // the account only works after the e-mailed link has been opened
+}
+
+// -- E-mail confirmation / password reset screens -------------------------------
+// Links in e-mails look like  https://site/#verify_email=<64 hex>  or  #reset_password=<64 hex>. The token lives in the
+// URL FRAGMENT so it is never sent to the server, written to logs or leaked in a Referer header; it is removed from the
+// address bar as soon as it has been read.
+function authForm(html) {
+  const box = document.getElementById("auth-method-form");
+  if (box) box.innerHTML = `<div class="auth-form-slide">${html}</div>`;
+}
+
+function renderEmailSent(email, wasUnverified) {
+  const e = esc(email);
+  authForm(`
+    <p style="margin:0 0 12px">${wasUnverified
+      ? "Your email address is not confirmed yet."
+      : "Almost done! We sent a confirmation link to"}
+      <strong>${e}</strong>.</p>
+    <p style="margin:0 0 16px;opacity:.8">Open the link in that email to activate your account, then sign in.
+      Check your spam folder if you cannot find it. The link works once and expires in 24 hours.</p>
+    <button class="btn btn-gold btn-full" onclick="resendVerification(this.dataset.email)" data-email="${e}">
+      <span class="material-icons-outlined">forward_to_inbox</span> Send the link again
+    </button>
+    <button class="btn btn-ghost btn-full" onclick="renderEmailForm('login')">Back to login</button>`);
+}
+
+async function resendVerification(email) {
+  const data = await api("/auth.php?action=resend_verification", "POST", { email });
+  showToast(data.error || data.message || "If that address can be used, we sent an email.", data.error ? "error" : "success");
+}
+
+function renderForgotForm() {
+  authForm(`
+    <p style="margin:0 0 12px">Enter your account email and we will send you a link to choose a new password.</p>
+    <div class="input-group"><label>Email</label>
+      <input type="email" id="forgot-email" class="input-field" placeholder="you@example.com"
+        onkeypress="if(event.key==='Enter') submitForgot()"></div>
+    <button class="btn btn-gold btn-full" onclick="submitForgot()">
+      <span class="material-icons-outlined">mail</span> Send reset link</button>
+    <button class="btn btn-ghost btn-full" onclick="renderEmailForm('login')">Back to login</button>`);
+  setTimeout(() => document.getElementById("forgot-email")?.focus(), 100);
+}
+
+async function submitForgot() {
+  const email = document.getElementById("forgot-email")?.value?.trim();
+  if (!email) { showToast("Enter your email", "error"); return; }
+  const data = await api("/auth.php?action=forgot_password", "POST", { email });
+  if (data.error) { showToast(data.error, "error"); return; }
+  authForm(`
+    <p style="margin:0 0 12px">If an account exists for <strong>${esc(email)}</strong>, a reset link is on its way.
+      It works once and expires in 1 hour.</p>
+    <button class="btn btn-ghost btn-full" onclick="renderEmailForm('login')">Back to login</button>`);
+}
+
+function renderResetForm(token) {
+  authForm(`
+    <p style="margin:0 0 12px">Choose a new password (8 to 72 characters).</p>
+    <div class="input-group"><label>New password</label>
+      <div class="password-wrap"><input type="password" id="reset-pass" class="input-field" autocomplete="new-password">
+        <button class="password-toggle" onclick="togglePassword('reset-pass')"><span class="material-icons-outlined">visibility</span></button></div></div>
+    <div class="input-group"><label>Confirm password</label>
+      <div class="password-wrap"><input type="password" id="reset-confirm" class="input-field" autocomplete="new-password"
+        onkeypress="if(event.key==='Enter') submitReset()">
+        <button class="password-toggle" onclick="togglePassword('reset-confirm')"><span class="material-icons-outlined">visibility</span></button></div></div>
+    <button class="btn btn-gold btn-full" onclick="submitReset()"><span class="material-icons-outlined">lock_reset</span> Save new password</button>`);
+  window._resetToken = token;      // kept in memory only; never written to storage or the URL
+}
+
+async function submitReset() {
+  const password = document.getElementById("reset-pass")?.value || "";
+  const confirm  = document.getElementById("reset-confirm")?.value || "";
+  if (password.length < 8)  { showToast("Password must be at least 8 characters", "error"); return; }
+  if (password !== confirm) { showToast("Passwords do not match", "error"); return; }
+  const data = await api("/auth.php?action=reset_password", "POST", { token: window._resetToken, password, confirm });
+  if (data.error) { showToast(data.error, "error"); return; }
+  window._resetToken = null;
+  showToast("Password updated. Please sign in.", "success");
+  renderEmailForm("login");
+}
+
+async function verifyEmailToken(token) {
+  authForm(`<p style="margin:0">Confirming your email address...</p>`);
+  const data = await api("/auth.php?action=verify_email", "POST", { token });
+  if (data.error) {
+    authForm(`<p style="margin:0 0 12px">${esc(data.error)}</p>
+      <button class="btn btn-ghost btn-full" onclick="renderEmailForm('login')">Back to login</button>`);
+    return;
+  }
+  showToast("Email confirmed. You can now sign in.", "success");
+  renderEmailForm("login");
+}
+
+// Called once on page load (app.js). Returns true when the page was opened from an e-mailed link.
+function handleAuthFragment() {
+  const m = /^#(verify_email|reset_password)=([a-f0-9]{64})$/.exec(location.hash || "");
+  if (!m) return false;
+  history.replaceState(null, "", location.pathname + location.search);
+  showPage("page-auth");
+  renderAuthLogin();
+  if (m[1] === "verify_email") verifyEmailToken(m[2]); else renderResetForm(m[2]);
+  return true;
 }
 
 // ── Google login ──────────────────────────────────────────────────────────────
@@ -444,7 +377,7 @@ function startGoogleLogin() {
 async function handleGoogleCallback(response) {
   const data = await api("/auth.php?action=google_login", "POST", {
     id_token: response.credential,
-    role: selectedRole,
+    role: "customer",
     remember_me: true,
   });
 
@@ -459,46 +392,6 @@ async function handleGoogleCallback(response) {
   handleAuthSuccess(data);
 }
 
-// ── Apple login ───────────────────────────────────────────────────────────────
-function startAppleLogin() {
-  if (!window.AppleID) { showToast("Apple Sign-In not loaded", "error"); return; }
-  AppleID.auth.init({
-    clientId:    APPLE_SERVICE_ID,
-    scope:       "name email",
-    redirectURI: APPLE_REDIRECT,
-    usePopup:    true,
-  });
-  AppleID.auth.signIn().then(handleAppleCallback).catch(err => {
-    if (err.error !== "popup_closed_by_user") showToast("Apple Sign-In failed", "error");
-  });
-}
-
-async function handleAppleCallback(response) {
-  const idToken = response.authorization?.id_token ?? "";
-  const email   = response.user?.email ?? "";
-  const name    = response.user?.name
-    ? ((response.user.name.firstName || "") + " " + (response.user.name.lastName || "")).trim()
-    : "";
-
-  const data = await api("/auth.php?action=apple_login", "POST", {
-    id_token: idToken,
-    role: selectedRole,
-    email,
-    name,
-    remember_me: true,
-  });
-
-  if (data.error) { showToast(data.error, "error"); return; }
-
-  if (data.needs_city) {
-    pendingSocial = { type: "apple", ...data };
-    renderCityPicker(data.name);
-    return;
-  }
-
-  handleAuthSuccess(data);
-}
-
 // ── City picker submit ────────────────────────────────────────────────────────
 async function submitCityPicker() {
   const city = document.getElementById("social-city")?.value;
@@ -506,7 +399,7 @@ async function submitCityPicker() {
 
   const payload = {
     city,
-    role:       pendingSocial.role || selectedRole,
+    role:       pendingSocial.role || "customer",
     email:      pendingSocial.email || "",
     name:       pendingSocial.name  || "",
     photo:      pendingSocial.photo || null,
@@ -567,12 +460,33 @@ function handleAuthSuccess(data) {
 }
 
 // ── Admin login ───────────────────────────────────────────────────────────────
-async function adminLogin() {
-  const email = document.getElementById("admin-email").value;
-  const pass  = document.getElementById("admin-password").value;
-  if (!email || !pass) { showToast("Enter email and password", "error"); return; }
-  const data = await api("/auth.php?action=admin_login", "POST", { email, password: pass });
-  if (data.error) { showToast(data.error, "error"); return; }
+// Step 1 is the password. For an admin with two-factor on, the server answers {two_factor_required, challenge} and issues NO session;
+// step 2 sends an authenticator code (or one single-use recovery code) together with that challenge. If ADMIN_2FA_REQUIRED=1 and the
+// admin has not enrolled yet, the answer is {needs_2fa_setup, challenge} and the admin enrols first. The challenge lives in memory
+// only (never in storage) and expires after a few minutes; the password field is cleared as soon as step 2 starts.
+let adminChallenge      = null;
+let adminPendingSession = null;
+let lastRecoveryCodes   = [];
+
+function adminStep(html) {
+  const form = document.getElementById("admin-login-form");
+  const box  = document.getElementById("admin-2fa-area");
+  if (!box) return;
+  if (form) form.style.display = html ? "none" : "block";
+  box.style.display = html ? "block" : "none";
+  box.innerHTML = html || "";
+  if (html) setTimeout(() => box.querySelector("input")?.focus(), 50);
+}
+
+function resetAdminLoginSteps() {
+  adminChallenge = null; adminPendingSession = null; lastRecoveryCodes = [];
+  adminStep("");
+  const pw = document.getElementById("admin-password");
+  if (pw) pw.value = "";
+}
+
+function finishAdminLogin(data) {
+  resetAdminLoginSteps();
   authToken   = data.token;
   currentUser = data.user;
   localStorage.setItem("bookkam_token", data.token);
@@ -580,6 +494,137 @@ async function adminLogin() {
   startInactivityWatcher();
   showPage("page-admin-dashboard");
   loadAdminDashboard();
+}
+
+async function adminLogin() {
+  const email = document.getElementById("admin-email").value;
+  const pass  = document.getElementById("admin-password").value;
+  if (!email || !pass) { showToast("Enter email and password", "error"); return; }
+  const data = await api("/auth.php?action=admin_login", "POST", { email, password: pass });
+  if (data.error) { showToast(data.error, "error"); return; }
+  if (data.two_factor_required && data.challenge) {
+    adminChallenge = data.challenge;
+    document.getElementById("admin-password").value = "";
+    renderAdmin2faStep(false);
+    return;
+  }
+  if (data.needs_2fa_setup && data.challenge) {
+    adminChallenge = data.challenge;
+    document.getElementById("admin-password").value = "";
+    renderAdmin2faSetup();
+    return;
+  }
+  if (!data.token || !data.user) { showToast("Unexpected response from the server", "error"); return; }
+  finishAdminLogin(data);
+}
+
+// Step 2: authenticator code, or a recovery code (each works once).
+function renderAdmin2faStep(useRecovery) {
+  adminStep(useRecovery ? `
+    <p style="margin:0 0 12px">Enter one of your recovery codes. Each code can be used once.</p>
+    <div class="input-group">
+      <label>Recovery code</label>
+      <input type="text" id="admin-2fa-recovery" class="input-field" autocomplete="off" autocapitalize="off" spellcheck="false"
+        placeholder="xxxx-xxxx-xxxx" onkeypress="if(event.key==='Enter') submitAdmin2fa(true)">
+    </div>
+    <button class="btn btn-gold btn-full" onclick="submitAdmin2fa(true)"><span class="material-icons-outlined">verified_user</span> Verify</button>
+    <button class="btn btn-ghost btn-full" style="margin-top:8px" onclick="renderAdmin2faStep(false)">Use my authenticator app instead</button>
+    <button class="btn btn-ghost btn-full" style="margin-top:8px" onclick="resetAdminLoginSteps()">Cancel</button>
+  ` : `
+    <p style="margin:0 0 12px">Enter the 6-digit code from your authenticator app.</p>
+    <div class="input-group">
+      <label>Authentication code</label>
+      <input type="text" id="admin-2fa-code" class="input-field" inputmode="numeric" autocomplete="one-time-code" maxlength="10"
+        placeholder="123456" onkeypress="if(event.key==='Enter') submitAdmin2fa(false)">
+    </div>
+    <button class="btn btn-gold btn-full" onclick="submitAdmin2fa(false)"><span class="material-icons-outlined">verified_user</span> Verify</button>
+    <button class="btn btn-ghost btn-full" style="margin-top:8px" onclick="renderAdmin2faStep(true)">Lost your phone? Use a recovery code</button>
+    <button class="btn btn-ghost btn-full" style="margin-top:8px" onclick="resetAdminLoginSteps()">Cancel</button>
+  `);
+}
+
+async function submitAdmin2fa(useRecovery) {
+  const el = document.getElementById(useRecovery ? "admin-2fa-recovery" : "admin-2fa-code");
+  const v  = (el && el.value || "").trim();
+  if (!v) { showToast(useRecovery ? "Enter a recovery code" : "Enter the 6-digit code", "error"); return; }
+  const body = { challenge: adminChallenge };
+  if (useRecovery) body.recovery_code = v; else body.code = v.replace(/\s+/g, "");
+  const data = await api("/auth.php?action=admin_login_2fa", "POST", body);
+  if (data.error) {
+    showToast(data.error, "error");
+    if (/expired|start again/i.test(data.error)) resetAdminLoginSteps();
+    else if (el) { el.value = ""; if (el.focus) el.focus(); }
+    return;
+  }
+  if (!data.token || !data.user) { showToast("Unexpected response from the server", "error"); return; }
+  finishAdminLogin(data);
+}
+
+// Shared by the login enrolment (below) and Settings -> Two-factor (admin.js).
+function adminSecretBlock(secret, uri) {
+  const grouped = String(secret || "").replace(/(.{4})/g, "$1 ").trim();
+  const link = (typeof uri === "string" && uri.startsWith("otpauth://"))
+    ? `<p style="margin:8px 0 0"><a href="${esc(uri)}">Open in my authenticator app</a> (on this phone)</p>` : "";
+  return `<div class="card" style="margin:12px 0">
+    <div style="font-size:12px;opacity:.7;margin-bottom:6px">Setup key (type it into your authenticator app; time-based, 6 digits)</div>
+    <div style="font-family:'Space Mono',monospace;font-size:16px;letter-spacing:1px;word-break:break-all">${esc(grouped)}</div>${link}
+  </div>`;
+}
+
+function adminRecoveryCodesHtml(codes) {
+  lastRecoveryCodes = Array.isArray(codes) ? codes.slice() : [];
+  return `<div class="card" style="margin:12px 0;font-family:'Space Mono',monospace;line-height:1.9">${lastRecoveryCodes.map(c => esc(c)).join("<br>")}</div>
+    <button class="btn btn-ghost btn-full" onclick="copyRecoveryCodes()"><span class="material-icons-outlined">content_copy</span> Copy the codes</button>`;
+}
+
+function copyRecoveryCodes() {
+  const text = lastRecoveryCodes.join("\n");
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => showToast("Copied", "success"), () => showToast("Could not copy; write the codes down", "error"));
+  } else showToast("Copy is not available here; write the codes down", "error");
+}
+
+// Enrolment during sign-in (only when the server requires two-factor and this admin has not set it up yet).
+async function renderAdmin2faSetup() {
+  const data = await api("/auth.php?action=admin_2fa_begin", "POST", { challenge: adminChallenge });
+  if (data.error) { showToast(data.error, "error"); resetAdminLoginSteps(); return; }
+  adminStep(`
+    <p style="margin:0 0 4px">Administrator accounts must use two-factor authentication.</p>
+    <p style="margin:0;opacity:.8">Add this key to an authenticator app (Google Authenticator, Microsoft Authenticator, Authy, 1Password...), then enter the 6-digit code it shows.</p>
+    ${adminSecretBlock(data.secret, data.otpauth_uri)}
+    <div class="input-group">
+      <label>Code from the app</label>
+      <input type="text" id="admin-2fa-code" class="input-field" inputmode="numeric" autocomplete="one-time-code" maxlength="10"
+        placeholder="123456" onkeypress="if(event.key==='Enter') submitAdmin2faSetup()">
+    </div>
+    <button class="btn btn-gold btn-full" onclick="submitAdmin2faSetup()">Turn on two-factor</button>
+    <button class="btn btn-ghost btn-full" style="margin-top:8px" onclick="resetAdminLoginSteps()">Cancel</button>
+  `);
+}
+
+async function submitAdmin2faSetup() {
+  const code = (document.getElementById("admin-2fa-code")?.value || "").replace(/\s+/g, "");
+  if (!code) { showToast("Enter the 6-digit code", "error"); return; }
+  const data = await api("/auth.php?action=admin_2fa_enable", "POST", { challenge: adminChallenge, code });
+  if (data.error) {
+    showToast(data.error, "error");
+    if (/expired|unauthori/i.test(data.error)) resetAdminLoginSteps();
+    return;
+  }
+  if (!data.token || !data.user) { showToast("Unexpected response from the server", "error"); resetAdminLoginSteps(); return; }
+  adminPendingSession = { token: data.token, user: data.user };
+  adminStep(`
+    <p style="margin:0 0 4px"><strong>Save your recovery codes now.</strong></p>
+    <p style="margin:0;opacity:.8">They are shown only once. Each works one time if you lose your phone. Store them somewhere safe, not in this browser.</p>
+    ${adminRecoveryCodesHtml(data.recovery_codes)}
+    <button class="btn btn-gold btn-full" style="margin-top:8px" onclick="finishAdminSetup()">I have saved them - continue</button>
+  `);
+}
+
+function finishAdminSetup() {
+  const sess = adminPendingSession;
+  if (!sess) { resetAdminLoginSteps(); return; }
+  finishAdminLogin(sess);
 }
 
 // ── Under review screen ───────────────────────────────────────────────────────

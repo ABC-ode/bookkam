@@ -35,3 +35,6 @@ function formatPhoneDisplay(raw) {
   if (raw.startsWith("0")) raw = raw.slice(1);
   return "+234" + raw;
 }
+
+// Escape any user-controlled text before it is placed inside innerHTML / HTML attributes.
+const esc = v => String(v == null ? "" : v).replace(/[&<>"'`]/g, ch => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;", "`":"&#96;" }[ch]));

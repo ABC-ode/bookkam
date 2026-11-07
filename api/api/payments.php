@@ -10,7 +10,7 @@ $user   = getAuthUser($pdo);
 require_once __DIR__ . "/../services/PaymentGateway.php";
 
 // Provider calls live in api/services (interface + OPay adapter + dev-only simulator).
-// OPay is NOT verified for production: keep OPAY_ENABLED=false (see docs/payments.md).
+// OPay is NOT verified against OPay (no credentials were available): keep OPAY_ENABLED=false until the sandbox checks in docs/payments.md are done.
 function providerFor(string $name) {
     return PaymentGateway::provider($name, !TEST_MODE);
 }
@@ -158,11 +158,13 @@ switch ($action) {
     case "get_methods": {
         respond([
             "opay"     => OPAY_ENABLED,
+            "payments_enabled" => appSettingOn($pdo, "payments_enabled") && appSettingOn($pdo, "bookings_enabled"),
             "wallet_top_up" => TEST_MODE, "test_mode" => TEST_MODE, // production top-up needs a verified provider flow (not built)
         ]);
     }
 
     case "initiate": {
+        requirePaymentsOpen($pdo);          // admin switches: starting a payment only; verify / webhook / refunds stay available
         $bookingId   = (int)($input["booking_id"] ?? 0);
         $bookingType = ($input["booking_type"] ?? "website") === "event" ? "event" : "website";
         $method      = $input["method"] ?? "cash";
@@ -232,8 +234,11 @@ switch ($action) {
             case "opay": {
                 if (!OPAY_ENABLED) respondError("Opay is not available yet — please choose another payment method", 503);
                 $ref = "BKM-OP-" . strtoupper($bookingType) . "-" . $bookingId . "-" . time() . bin2hex(random_bytes(3));
-                $r   = providerFor("opay")->initiate($ref, (int)round($totalCharge * 100), "NGN", $email,
-                    ["callback_url" => "https://bookkam.com/?opay_return=1&booking_type=$bookingType"]);
+                if (APP_URL === "") respondError("Payments are not configured yet. Please choose another payment method.", 503);
+                $r   = providerFor("opay")->initiate($ref, (int)round($totalCharge * 100), "NGN", $email, [
+                    "return_url"   => APP_URL . "/?opay_return=1&booking_type=" . rawurlencode($bookingType),   // where the customer lands
+                    "callback_url" => APP_URL . "/api/payments.php?action=opay_webhook",                          // where OPay notifies us
+                ]);
                 if (($r["status"] ?? "") === "pending" && !empty($r["checkout_url"])) {
                     $pdo->prepare("INSERT INTO payments (booking_id,amount,deposit_amount,method,status,provider_reference,booking_kind) VALUES (?,?,?,?,'pending',?,?)")
                         ->execute([$bookingId, $amount, $deposit, "opay", $ref, $bookingType]);
@@ -261,19 +266,86 @@ switch ($action) {
         break;
     }
 
-    // ── Opay webhook — inert unless OPAY_ENABLED. The body is an untrusted hint: only the
-    // reference is read from it, and the real status/amount/currency come from OPay's own API.
-    // Provider outage => 503 so the provider retries; unknown references are acknowledged.
+    // ── OPay callback. Inert unless OPAY_ENABLED. The body must carry a valid HMAC-SHA3-512 signature, but even then it is only
+    // a HINT: status, amount and currency are taken from OPay's own status API (signed request). Answers: 200 = handled or
+    // nothing to do (duplicates are harmless, unknown references are acknowledged); 400 = forged or malformed (nothing
+    // changes); 503 = could not confirm right now, so OPay retries (it retries non-2xx answers for 72 hours).
     case "opay_webhook": {
         if (!OPAY_ENABLED) { http_response_code(200); echo "OK"; exit; }
-        $payload = json_decode(file_get_contents("php://input"), true);
-        $ref     = is_array($payload) ? (string)($payload["reference"] ?? ($payload["payload"]["reference"] ?? "")) : "";
-        if ($ref === "" || PaymentGateway::nameForReference($ref) !== "opay") { http_response_code(200); echo "OK"; exit; }
-        [$code, $body] = applyProviderResult($pdo, $ref, providerFor("opay")->verify($ref));
-        if ($code >= 500 || ($body["status"] ?? "") === "unavailable") { http_response_code(503); exit; }
+        $body = json_decode(file_get_contents("php://input"), true);
+        $opay = providerFor("opay");
+        $cb   = is_array($body) ? $opay->verifyCallback($body) : ["valid" => false, "reason" => "shape"];
+        if (!$cb["valid"]) {
+            if (($cb["reason"] ?? "") === "type") { http_response_code(200); echo "OK"; exit; }   // e.g. refund notifications: check them with opay_refund_status
+            http_response_code(400); exit;
+        }
+        $ref = (string)$cb["reference"];
+        if (strlen($ref) > 255 || PaymentGateway::nameForReference($ref) !== "opay") { http_response_code(200); echo "OK"; exit; }
+        [$code, $res] = applyProviderResult($pdo, $ref, $opay->verify($ref));
+        $hintedPaid = ($cb["status"] === "SUCCESS" && !$cb["refunded"]);
+        if ($code >= 500 || ($res["status"] ?? "") === "unavailable" || ($hintedPaid && ($res["status"] ?? "") === "pending")) { http_response_code(503); exit; }
         http_response_code(200);
         echo "OK";
         exit;
+    }
+
+    // ── OPay refund (admin only, full amount only). The merchant refund reference is derived from the payment id, so repeating
+    // the call can never create a second refund at OPay: a repeat answers "duplicate" and opay_refund_status tells the outcome.
+    // OPay returns OPay-wallet / bank-account payments to their source (refund_way=Original); card, bank-transfer and USSD
+    // payments can only go to a bank account (refund_way=BankAccount with bank_code + bank_account_no). Bank details are never stored or logged.
+    // This does not change the payment or booking rows (the live payments.status values are not in the repo): record it in your books.
+    case "opay_refund": {
+        if (!$user || ($user["role"] ?? "") !== "admin") respondError("Forbidden", 403);
+        if (!OPAY_ENABLED) respondError("OPay is not enabled", 503);
+        if (APP_URL === "") respondError("Payments are not configured (APP_URL missing)", 503);
+        $pid = filter_var($input["payment_id"] ?? null, FILTER_VALIDATE_INT);
+        if (!$pid || $pid <= 0) respondError("payment_id required");
+        $ps = $pdo->prepare("SELECT * FROM payments WHERE id=?"); $ps->execute([$pid]); $pay = $ps->fetch();
+        if (!$pay || ($pay["method"] ?? "") !== "opay" || ($pay["status"] ?? "") !== "success" || empty($pay["provider_reference"])) respondError("Only a successful OPay payment can be refunded");
+        $minor = (int)round(((float)$pay["amount"] + (float)$pay["deposit_amount"]) * 100);
+        $r = providerFor("opay")->refund("BKM-RF-" . $pid, (string)$pay["provider_reference"], $minor, "NGN", [
+            "refund_way"      => (string)($input["refund_way"] ?? ""),
+            "bank_code"       => (string)($input["bank_code"] ?? ""),
+            "bank_account_no" => (string)($input["bank_account_no"] ?? ""),
+            "reason"          => (string)($input["reason"] ?? ""),
+            "callback_url"    => APP_URL . "/api/payments.php?action=opay_webhook",
+        ]);
+        error_log("BOOKKAM OPay refund payment=" . $pid . " status=" . ($r["status"] ?? "?"));
+        $http = match ($r["status"] ?? "") { "success", "pending" => 200, "duplicate" => 409, "failed" => 400, default => 503 };
+        jsonOut(["status" => $r["status"] ?? "unavailable", "refund_reference" => "BKM-RF-" . $pid, "message" => $r["message"] ?? ""], $http);
+    }
+
+    case "opay_refund_status": {
+        if (!$user || ($user["role"] ?? "") !== "admin") respondError("Forbidden", 403);
+        if (!OPAY_ENABLED) respondError("OPay is not enabled", 503);
+        $pid = filter_var($_GET["payment_id"] ?? $input["payment_id"] ?? null, FILTER_VALIDATE_INT);
+        if (!$pid || $pid <= 0) respondError("payment_id required");
+        $r = providerFor("opay")->refundStatus("BKM-RF-" . $pid);
+        jsonOut(["status" => $r["status"] ?? "unavailable", "refund_reference" => "BKM-RF-" . $pid, "message" => $r["message"] ?? ""], ($r["status"] ?? "") === "unavailable" ? 503 : 200);
+    }
+
+    // ── Reconciliation (admin only): ask OPay about OPay payments still "pending" (callback lost, customer closed the tab)
+    // and settle the ones OPay confirms through the same verified path as the webhook. Idempotent; run it as often as you like.
+    // Looks at the newest pending OPay payments of the last 7 days (limit 1-100, default 50).
+    case "opay_reconcile": {
+        if (!$user || ($user["role"] ?? "") !== "admin") respondError("Forbidden", 403);
+        if (!OPAY_ENABLED) respondError("OPay is not enabled", 503);
+        $limit = max(1, min(100, (int)($input["limit"] ?? $_GET["limit"] ?? 50)));
+        // Newest first, last 7 days only: abandoned checkouts never complete and must not crowd out recent payments. (A very late
+        // success still arrives through the callback, which OPay retries for 72 hours.)
+        $since = $pdo->prepare("SELECT id, provider_reference FROM payments WHERE method='opay' AND status='pending' AND provider_reference IS NOT NULL AND created_at >= ? ORDER BY id DESC LIMIT " . $limit);
+        $since->execute([gmdate("Y-m-d H:i:s", time() - 7 * 86400)]);
+        $rows = $since->fetchAll();
+        $counts = []; $items = [];
+        foreach ($rows as $row) {
+            $ref = (string)$row["provider_reference"];
+            if (PaymentGateway::nameForReference($ref) !== "opay") continue;
+            [$code, $res] = applyProviderResult($pdo, $ref, providerFor("opay")->verify($ref));
+            $outcome = (string)($res["status"] ?? "error");
+            $counts[$outcome] = ($counts[$outcome] ?? 0) + 1;
+            $items[] = ["payment_id" => (int)$row["id"], "outcome" => $outcome];
+        }
+        respond(["checked" => count($items), "outcomes" => $counts, "items" => $items]);
     }
 
     // Customer-facing status check (also what the return page should call).
@@ -289,6 +361,7 @@ switch ($action) {
 
     case "top_up_wallet": {
         if (!$user) respondError("Unauthorised", 401);
+        requirePaymentsOpen($pdo);
         // No verified provider-backed top-up exists, so production never credits a wallet
         // from this endpoint, whatever the client sends.
         if (!TEST_MODE) respondError("Wallet top-ups are temporarily unavailable. Please contact support.", 503);

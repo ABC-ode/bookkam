@@ -1,19 +1,20 @@
-const CACHE_NAME = 'bookkam-v6';
+const CACHE_NAME = 'bookkam-v8';
 const OFFLINE_URL = '/offline.html';
 
 const ASSETS = [
   '/',
   '/index.php',
-  '/css/style.css?v=4',
-  '/css/material-icons-outlined.css',
+  '/css/style.css?v=5',
+  '/css/material-icons-outlined.css?v=1',
   '/fonts/material-icons-outlined.woff2',
-  '/js/app.js?v=6',
-  '/js/auth.js?v=6',
-  '/js/customer.js?v=6',
-  '/js/driver.js?v=6',
-  '/js/admin.js?v=8',
-  '/js/maps.js?v=6',
-  '/js/utils.js?v=6',
+  '/js/app.js?v=8',
+  '/js/auth.js?v=8',
+  '/js/customer.js?v=8',
+  '/js/driver.js?v=8',
+  '/js/admin.js?v=9',
+  '/js/maps.js?v=8',
+  '/js/location.js?v=8',
+  '/js/utils.js?v=8',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
   '/offline.html',

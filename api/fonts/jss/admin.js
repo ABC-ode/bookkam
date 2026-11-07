@@ -578,7 +578,7 @@ async function loadChatsList(flaggedOnly) {
           ${c.car_name}
         </div>
         <div style="font-size:12px;color:var(--muted)">Customer: ${c.customer_name} · Driver: ${c.driver_name||"N/A"}</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:4px">${c.last_message||""}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px">${esc(c.last_message)}</div>
       </div>
       <div style="text-align:right">
         <div style="font-size:11px;color:var(--muted)">${fmtDate(c.last_at)}</div>
@@ -606,7 +606,7 @@ async function openAdminChatView(bookingId) {
   el.innerHTML = msgs.map(m => `
   <div class="chat-msg-admin ${m.is_flagged?"chat-flagged":""}">
     <div style="font-size:11px;color:var(--muted);margin-bottom:2px">${m.sender_name} · ${fmtTime(m.created_at)}</div>
-    <div class="chat-bubble">${m.message_text} ${m.is_flagged?`<span style="color:var(--fire);font-size:11px">⚠️ Flagged</span>`:""}</div>
+    <div class="chat-bubble">${esc(m.message_text)} ${m.is_flagged?`<span style="color:var(--fire);font-size:11px">⚠️ Flagged</span>`:""}</div>
   </div>`).join("");
   el.scrollTop = el.scrollHeight;
 }

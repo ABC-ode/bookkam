@@ -39,8 +39,6 @@ $adminPortal = $adminPortalKey !== '' && isset($_GET['bkp']) && hash_equals($adm
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="/icons/favicon.png">
   <link rel="shortcut icon" type="image/png" href="/icons/favicon.png">
-    <link href="https://api.mapbox.com/mapbox-gl-js/v3.7.0/mapbox-gl.css" rel="stylesheet">
-     
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
@@ -51,9 +49,8 @@ $adminPortal = $adminPortalKey !== '' && isset($_GET['bkp']) && hash_equals($adm
   <!-- Fonts & Icons -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;600&family=Space+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/material-icons-outlined.css">
-  <link href="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=4">
+  <link rel="stylesheet" href="/css/material-icons-outlined.css?v=1">
+  <link rel="stylesheet" href="/css/style.css?v=5">
   <script>window.ADMIN_PORTAL = <?= $adminPortal ? 'true' : 'false' ?>;</script>
   </head>
 <body>
@@ -99,6 +96,7 @@ $adminPortal = $adminPortalKey !== '' && isset($_GET['bkp']) && hash_equals($adm
       </div>
       <div id="auth-content"></div>
       <div id="admin-login-area" style="display:none;margin-top:16px">
+        <div id="admin-login-form">
         <div class="input-group">
           <label>Admin Email</label>
           <input type="email" id="admin-email" class="input-field" placeholder="admin@bookkam.com">
@@ -114,6 +112,8 @@ $adminPortal = $adminPortalKey !== '' && isset($_GET['bkp']) && hash_equals($adm
         <button class="btn btn-ghost btn-full" style="margin-top:8px" onclick="hideAdminLogin()">
           <span class="material-icons-outlined">close</span> Cancel
         </button>
+        </div>
+        <div id="admin-2fa-area" style="display:none"></div>
       </div>
     </div>
      
@@ -644,7 +644,6 @@ $adminPortal = $adminPortalKey !== '' && isset($_GET['bkp']) && hash_equals($adm
   var PAYMENT_ENDPOINT = '/api/payments.php';
   var PUBLIC_CONFIG_ENDPOINT = '/api/public-config.php';
   var PACKAGES_ENDPOINT = '/api/event-packages.php';
-  var GY_TOKEN = "pk.eyJ1IjoiYm9va2thbSIsImEiOiJjbW5uYXRyaXYxZm9lMnByNjc1OHNycG5vIn0.zUAwUDojhM0ROm2l58J4kg";
 
   var WHATSAPP_NUMBER = '2349164812347'; // overwritten below once /api/public-config.php responds
   fetch(PUBLIC_CONFIG_ENDPOINT).then(function (r) { return r.json(); }).then(function (data) {
@@ -734,7 +733,7 @@ $adminPortal = $adminPortalKey !== '' && isset($_GET['bkp']) && hash_equals($adm
 
     fetch('/api/booking-cards.php?action=get_active')
       .then(function (r) { return r.json(); })
-      .then(function (data) { draw((data && data.cards && data.cards.length) ? data.cards : FALLBACK_HOME_BOOKING_CARDS); })
+      .then(function (data) { draw((data && Array.isArray(data.cards)) ? data.cards : FALLBACK_HOME_BOOKING_CARDS); })
       .catch(function () { draw(FALLBACK_HOME_BOOKING_CARDS); });
   }
 
@@ -1145,11 +1144,14 @@ $adminPortal = $adminPortalKey !== '' && isset($_GET['bkp']) && hash_equals($adm
     // ── Pickup autocomplete ──────────────────────────────────────────────
     function fetchSuggestions(query, cfg) {
       if (!query || query.length < 3) { renderSuggestions([]); return; }
-      var url = 'https://api.mapbox.com/geocoding/v5/mapbox.places/' + encodeURIComponent(query) + '.json' +
-        '?access_token=' + GY_TOKEN + '&country=ng&proximity=' + cfg.venue_lng + ',' + cfg.venue_lat + '&limit=5';
-      fetch(url).then(function (r) { return r.json(); })
-        .then(function (data) { renderSuggestions(data && data.features ? data.features : []); })
-        .catch(function () { renderSuggestions([]); });
+      // Mapbox is OFF unless the server enabled it (maps.js loadMapbox); then the user just types the pickup address.
+      loadMapbox().then(function (ok) {
+        if (!ok) { renderSuggestions([]); return; }
+        var url = 'https://api.mapbox.com/geocoding/v5/mapbox.places/' + encodeURIComponent(query) + '.json' +
+          '?access_token=' + encodeURIComponent(getMapboxToken()) + '&country=ng&proximity=' + cfg.venue_lng + ',' + cfg.venue_lat + '&limit=5';
+        return fetch(url).then(function (r) { return r.json(); })
+          .then(function (data) { renderSuggestions(data && data.features ? data.features : []); });
+      }).catch(function () { renderSuggestions([]); });
     }
 
     function renderSuggestions(features) {
@@ -1212,9 +1214,18 @@ $adminPortal = $adminPortalKey !== '' && isset($_GET['bkp']) && hash_equals($adm
 
     // ── Map init ─────────────────────────────────────────────────────────
     function initMap(cfg) {
-      if (mapInstances[overlay.id] || typeof mapboxgl === 'undefined') return;
-      mapboxgl.accessToken = GY_TOKEN;
+      if (mapInstances[overlay.id]) return;
       var mapEl = overlay.querySelector('.gy-map-canvas');
+      loadMapbox().then(function (ok) {
+        if (!ok) {
+          if (mapEl) mapEl.textContent = 'Map not available right now. Pickup and drop-off for this event: ' + cfg.name;
+          return;
+        }
+        buildMap(cfg, mapEl);
+      });
+    }
+    function buildMap(cfg, mapEl) {
+      if (mapInstances[overlay.id] || typeof mapboxgl === 'undefined') return;
       var map = new mapboxgl.Map({
         container: mapEl, style: 'mapbox://styles/mapbox/dark-v11',
         center: [cfg.venue_lng, cfg.venue_lat], zoom: 15, interactive: true, attributionControl: false
@@ -1564,6 +1575,7 @@ $adminPortal = $adminPortalKey !== '' && isset($_GET['bkp']) && hash_equals($adm
 <div id="page-admin-dashboard" class="page" style="display:none">
   <div class="dashboard-layout">
     <aside class="sidebar" id="admin-sidebar"></aside>
+    <div class="sidebar-backdrop" id="admin-sidebar-backdrop" onclick="closeAdminSidebar()"></div>
     <main class="main-content">
       <div class="topbar" id="admin-topbar"></div>
       <div class="tab-body">
@@ -1581,6 +1593,7 @@ $adminPortal = $adminPortalKey !== '' && isset($_GET['bkp']) && hash_equals($adm
         <div class="tab-content" id="tab-admin-promos"     style="display:none"></div>
         <div class="tab-content" id="tab-admin-cities"     style="display:none"></div>
         <div class="tab-content" id="tab-admin-booking-card" style="display:none"></div>
+        <div class="tab-content" id="tab-admin-settings"   style="display:none"></div>
       </div>
     </main>
   </div>
@@ -1594,16 +1607,15 @@ $adminPortal = $adminPortalKey !== '' && isset($_GET['bkp']) && hash_equals($adm
 </div>
 
 <!-- Scripts -->
-<script src="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
-<script src="https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js" async defer></script>
-<script src="/js/utils.js?v=6"></script>
-<script src="/js/app.js?v=6"></script>
-<script src="/js/maps.js?v=6"></script>
-<script src="/js/auth.js?v=6"></script>
-<script src="/js/customer.js?v=6"></script>
-<script src="/js/driver.js?v=6"></script>
-<script src="/js/admin.js?v=8"></script>
+<script src="/js/utils.js?v=8"></script>
+<script src="/js/app.js?v=8"></script>
+<script src="/js/maps.js?v=8"></script>
+<script src="/js/location.js?v=8"></script>
+<script src="/js/auth.js?v=8"></script>
+<script src="/js/customer.js?v=8"></script>
+<script src="/js/driver.js?v=8"></script>
+<script src="/js/admin.js?v=9"></script>
 <script>
   // Register service worker for PWA
   if ('serviceWorker' in navigator) {

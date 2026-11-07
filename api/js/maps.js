@@ -1,6 +1,61 @@
 // ── MAPS.JS — Mapbox GL JS ────────────────────────────────────────────────────
-const MAPBOX_TOKEN = "pk.eyJ1IjoiYm9va2thbSIsImEiOiJjbW5uYXRyaXYxZm9lMnByNjc1OHNycG5vIn0.zUAwUDojhM0ROm2l58J4kg";
-mapboxgl.accessToken = MAPBOX_TOKEN;
+// Mapbox is OFF by default. This page never downloads Mapbox code and never calls a Mapbox API unless
+// /api/public-config.php answers {mapbox:{enabled:true, token:"pk..."}} (server side: MAPBOX_ENABLED=1 plus a PUBLIC pk. token).
+// No token is stored in this repository. Anything that fails (config, network, script) leaves Mapbox OFF.
+const MAPBOX_GL_VERSION = "3.3.0";
+let MAPBOX_TOKEN      = "";
+let mapboxEnabled     = false;
+let mapboxLoadPromise = null;
+
+function mapboxAvailable() { return mapboxEnabled && typeof mapboxgl !== "undefined"; }
+function getMapboxToken()  { return mapboxEnabled ? MAPBOX_TOKEN : ""; }
+
+async function fetchMapboxToken() {
+  try {
+    const res  = await fetch("/api/public-config.php", { credentials: "omit" });
+    const data = await res.json();
+    const mb   = data && data.mapbox;
+    if (mb && mb.enabled === true && typeof mb.token === "string" && mb.token.startsWith("pk.")) return mb.token;   // never a secret (sk.) token
+  } catch (e) { /* fail closed */ }
+  return "";
+}
+
+// Resolves true only when Mapbox GL is loaded and ready; false (never throws) when it is off or unavailable. Runs once.
+function loadMapbox() {
+  if (mapboxLoadPromise) return mapboxLoadPromise;
+  mapboxLoadPromise = (async () => {
+    const token = await fetchMapboxToken();
+    if (!token) return false;
+    try {
+      await new Promise((resolve, reject) => {
+        const base = "https://api.mapbox.com/mapbox-gl-js/v" + MAPBOX_GL_VERSION + "/mapbox-gl";
+        const css  = document.createElement("link"); css.rel = "stylesheet"; css.href = base + ".css"; document.head.appendChild(css);
+        const js   = document.createElement("script"); js.src = base + ".js"; js.async = true;
+        js.onload = resolve; js.onerror = () => reject(new Error("Mapbox GL failed to load"));
+        document.head.appendChild(js);
+      });
+      if (typeof mapboxgl === "undefined") return false;
+      mapboxgl.accessToken = MAPBOX_TOKEN = token;
+      mapboxEnabled = true;
+      return true;
+    } catch (e) { return false; }
+  })();
+  return mapboxLoadPromise;
+}
+
+function showMapUnavailable(el) {
+  if (el) el.innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px">The live map is not available right now. Trip details and updates still work.</div>';
+}
+// Runs build() once Mapbox is ready, otherwise shows a plain message in the container.
+function withMapbox(containerId, build) {
+  const el = document.getElementById(containerId);
+  if (!el) return null;
+  loadMapbox().then(ok => {
+    if (!ok) { showMapUnavailable(el); return; }
+    if (document.getElementById(containerId) === el) build();
+  });
+  return null;
+}
 
 const BOOKKAM_COORDS = {
   CALABAR:         [8.3220, 4.9517],
@@ -8,6 +63,7 @@ const BOOKKAM_COORDS = {
   LAGOS:           [3.3792, 6.5244],
   ABUJA:           [7.3986, 9.0765],
   "PORT HARCOURT": [7.0498, 4.8156],
+  UYO:             [7.9128, 5.0377],
   DEFAULT:         [8.3220, 4.9517],
 };
 
@@ -67,6 +123,7 @@ function makeDriverMarkerEl() {
 // ── Mapbox Geocoding — replaces Nominatim (better Nigerian coverage) ──────────
 async function geocodeAddress(query, callback) {
   if (!query || query.length < 3) { callback([]); return; }
+  if (!(await loadMapbox())) { callback([]); return; }   // Mapbox OFF: no request leaves the page
   try {
     const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json`
       + `?access_token=${MAPBOX_TOKEN}`
@@ -93,6 +150,7 @@ async function searchAddress(query, callback) {
 
 // ── Mapbox Reverse Geocoding — replaces Nominatim reverse ────────────────────
 async function reverseGeocode(lng, lat) {
+  if (!(await loadMapbox())) return null;
   try {
     const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json`
       + `?access_token=${MAPBOX_TOKEN}`
@@ -107,12 +165,12 @@ async function reverseGeocode(lng, lat) {
 
 // ── Route drawing ─────────────────────────────────────────────────────────────
 async function drawRoute(map, fromLngLat, toLngLat) {
-  if (!fromLngLat || !toLngLat) return;
+  if (!fromLngLat || !toLngLat || !mapboxAvailable()) return null;
   try {
     const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${fromLngLat[0]},${fromLngLat[1]};${toLngLat[0]},${toLngLat[1]}?geometries=geojson&access_token=${MAPBOX_TOKEN}`;
     const res  = await fetch(url);
     const data = await res.json();
-    if (!data.routes || !data.routes.length) return;
+    if (!data.routes || !data.routes.length) return null;
     const geojson = { type: "Feature", geometry: data.routes[0].geometry };
     const layerId = "route-" + Date.now();
     if (routeLayerId) {
@@ -128,11 +186,13 @@ async function drawRoute(map, fromLngLat, toLngLat) {
     const coords = data.routes[0].geometry.coordinates;
     const bounds = coords.reduce((b, c) => b.extend(c), new mapboxgl.LngLatBounds(coords[0], coords[0]));
     map.fitBounds(bounds, { padding: 60 });
+    return { distance: data.routes[0].distance, duration: data.routes[0].duration };
   } catch(e) { console.warn("Route error:", e); }
+  return null;
 }
 
 // ── Customer tracking map ─────────────────────────────────────────────────────
-function initCustomerTrackingMap(containerId, booking) {
+function _buildCustomerTrackingMap(containerId, booking) {
   const container = document.getElementById(containerId);
   if (!container) return;
   if (customerTrackingMap) { customerTrackingMap.remove(); customerTrackingMap = null; }
@@ -162,7 +222,7 @@ function initCustomerTrackingMap(containerId, booking) {
 }
 
 // ── Self-drive map ────────────────────────────────────────────────────────────
-function initSelfDriveMap(containerId, booking) {
+function _buildSelfDriveMap(containerId, booking) {
   const container = document.getElementById(containerId);
   if (!container) return;
   const city   = (booking?.city || "").toUpperCase();
@@ -197,7 +257,7 @@ function stopPollingDriverLocation() {
 }
 
 // ── Driver navigation map ─────────────────────────────────────────────────────
-function initDriverNavMap(containerId, activeBooking) {
+function _buildDriverNavMap(containerId, activeBooking) {
   const container = document.getElementById(containerId);
   if (!container) return;
   if (driverNavMap) { driverNavMap.remove(); driverNavMap = null; }
@@ -274,3 +334,6 @@ function initMapAddressInput(inputId, suggestionsId, onSelect) {
     }
   });
 }
+function initCustomerTrackingMap(containerId, booking) { return withMapbox(containerId, () => _buildCustomerTrackingMap(containerId, booking)); }
+function initSelfDriveMap(containerId, booking) { return withMapbox(containerId, () => _buildSelfDriveMap(containerId, booking)); }
+function initDriverNavMap(containerId, activeBooking) { return withMapbox(containerId, () => _buildDriverNavMap(containerId, activeBooking)); }

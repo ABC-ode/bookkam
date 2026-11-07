@@ -12,10 +12,11 @@ const CITIES = ["Calabar","Ikom","Obudu","Ogoja","Uyo","Port Harcourt","Abuja","
 
 // ── Main render ───────────────────────────────────────────────────────────────
 // One sign-in screen for everybody. Sign-in is role-agnostic (the server answers with the account's own role and
-// handleAuthSuccess routes to the right dashboard), so drivers sign in here too. People who want to drive tick
-// "I want to drive with BOOKKAM" on the Register tab.
+// handleAuthSuccess routes to the right dashboard), so drivers sign in here too. Driver applications start
+// from the separate "Want to be a driver?" action below.
 function renderAuthLogin() {
   activeMethod   = null;
+  registrationRole = "customer";
   pendingSocial  = null;
   if (countdownTimer) clearInterval(countdownTimer);
 

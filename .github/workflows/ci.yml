@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main, feat/email-auth-opay]
+    branches: [main, 'feat/**']
 
 permissions:
   contents: read
@@ -36,7 +36,7 @@ jobs:
       - name: JavaScript syntax check
         run: |
           set -e
-          for f in api/js/*.js sw.js tests/functional/*.js; do node --check "$f"; done
+          for f in api/js/*.js api/sw.js tests/functional/*.js; do node --check "$f"; done
 
       - name: Python syntax check
         run: python -m py_compile tests/functional/*.py

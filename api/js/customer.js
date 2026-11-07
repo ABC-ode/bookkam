@@ -788,13 +788,33 @@ async function loadTracking() {
           </div>
         </div>
       </div>
-      <div id="tracking-map" style="height:calc(100vh - 280px);border-radius:14px"></div>
+      <div class="card" style="margin-top:16px">
+        <div style="font-weight:700;margin-bottom:6px">Live trip tracking</div>
+        <p style="font-size:13px;color:var(--muted);margin:0 0 14px">The live map uses Mapbox to display your driver's location and route. It will only load after you choose to view live tracking.</p>
+        <button class="btn btn-gold btn-full" type="button" onclick="enableTripTracking(${Number(b.id)})">
+          <span class="material-icons-outlined">map</span> View live trip
+        </button>
+      </div>
+      <div id="tracking-map" style="display:none;height:calc(100vh - 280px);border-radius:14px;margin-top:16px"></div>
     </div>`;
-    setTimeout(() => {
-      initCustomerTrackingMap("tracking-map", b);
-      startPollingDriverLocation(b.id);
-    }, 100);
   }
+}
+
+async function enableTripTracking(bookingId) {
+  const el = document.getElementById("tab-customer-tracking");
+  if (!el) return;
+  const data = await api("/bookings.php?action=get_my_bookings&status=active");
+  const booking = (data.bookings || []).find(item => String(item.id) === String(bookingId));
+  if (!booking) {
+    showToast("This trip is no longer available for tracking", "error");
+    loadTracking();
+    return;
+  }
+  const map = document.getElementById("tracking-map");
+  if (!map) return;
+  map.style.display = "block";
+  initCustomerTrackingMap("tracking-map", booking);
+  startPollingDriverLocation(booking.id);
 }
 
 // ── IN-APP CHAT ───────────────────────────────────────────────────────────────

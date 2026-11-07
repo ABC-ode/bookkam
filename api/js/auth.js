@@ -4,6 +4,7 @@ const GOOGLE_CLIENT_ID = "506985141783-svn9ilskpk1et5sr6tedv7vkg2vlio53.apps.goo
 
 let countdownTimer  = null;
 let activeMethod    = null; // "email" | "google"
+let registrationRole = "customer";
 let pendingSocial   = null; // holds {pending_token, email, name, photo, role} while the city picker is shown
 
 // ── Cities list ───────────────────────────────────────────────────────────────
@@ -51,6 +52,11 @@ function renderAuthMethods() {
           Continue with Google
         </button>
 
+        <button class="auth-method-btn" type="button" disabled aria-disabled="true" title="Apple Sign-In will be available after BOOKKAM completes Apple developer setup" style="opacity:.5;cursor:not-allowed">
+          <span class="material-icons-outlined">phone_iphone</span>
+          Continue with Apple <span style="font-size:11px;margin-left:auto">Coming soon</span>
+        </button>
+
         <div class="auth-divider"><span>or</span></div>
         <button class="auth-method-btn auth-method-guest" onclick="browseAsGuest()">
           <span class="material-icons-outlined">visibility</span>
@@ -59,6 +65,9 @@ function renderAuthMethods() {
       </div>
 
       <div id="auth-method-form"></div>
+      <div class="auth-driver-link" style="text-align:center;margin-top:14px">
+        <button class="btn btn-ghost" type="button" style="font-size:13px;color:var(--muted)" onclick="startDriverApplication()">Want to be a driver? Apply here</button>
+      </div>
 
     </div>
   `;
@@ -82,8 +91,16 @@ function selectMethod(method) {
   if (method === "email") renderEmailForm("login");
 }
 
+// ── Driver application entry point ───────────────────────────────────────────
+function startDriverApplication() {
+  registrationRole = "driver";
+  selectMethod("email");
+  renderEmailForm("register", "driver");
+}
+
 // ── Email form ────────────────────────────────────────────────────────────────
-function renderEmailForm(tab = "login") {
+function renderEmailForm(tab = "login", role = registrationRole) {
+  registrationRole = role === "driver" ? "driver" : "customer";
   const loginActive    = tab === "login"    ? "active" : "";
   const registerActive = tab === "register" ? "active" : "";
 
@@ -91,7 +108,7 @@ function renderEmailForm(tab = "login") {
     <div class="auth-form-slide">
       <div class="auth-email-tabs">
         <button class="auth-tab ${loginActive}"    onclick="renderEmailForm('login')">Login</button>
-        <button class="auth-tab ${registerActive}" onclick="renderEmailForm('register')">Register</button>
+        <button class="auth-tab ${registerActive}" onclick="renderEmailForm('register', 'customer')">Register</button>
       </div>
 
       ${tab === "login" ? `
@@ -110,49 +127,7 @@ function renderEmailForm(tab = "login") {
             </button>
           </div>
         </div>
-        <label class="auth-remember-label">
-          <input type="checkbox" id="email-remember"> Remember me for 7 days
-        </label>
-        <button class="btn btn-gold btn-full" onclick="submitEmailLogin()">
-          <span class="material-icons-outlined">login</span> Login
-        </button>
-        <button class="btn btn-ghost btn-full" onclick="renderForgotForm()">Forgot password?</button>
-      ` : `
-        <div class="input-group">
-          <label>Full Name</label>
-          <input type="text" id="reg-name" class="input-field" placeholder="Your full name">
-        </div>
-        <div class="input-group">
-          <label>Email</label>
-          <input type="email" id="reg-email" class="input-field" placeholder="you@example.com">
-        </div>
-        <div class="input-group">
-          <label>Password</label>
-          <div class="password-wrap">
-            <input type="password" id="reg-pass" class="input-field" placeholder="At least 8 characters">
-            <button class="password-toggle" onclick="togglePassword('reg-pass')">
-              <span class="material-icons-outlined">visibility</span>
-            </button>
-          </div>
-        </div>
-        <div class="input-group">
-          <label>Confirm Password</label>
-          <div class="password-wrap">
-            <input type="password" id="reg-confirm" class="input-field" placeholder="Repeat password">
-            <button class="password-toggle" onclick="togglePassword('reg-confirm')">
-              <span class="material-icons-outlined">visibility</span>
-            </button>
-          </div>
-        </div>
-        <div class="input-group">
-          <label>City</label>
-          <select id="reg-city" class="input-field">
-            ${CITIES.map(c => `<option value="${c}">${c}</option>`).join("")}
-          </select>
-        </div>
-        <label class="auth-remember-label">
-          <input type="checkbox" id="reg-drive"> I want to drive with BOOKKAM
-        </label>
+        ${registrationRole === "driver" ? '<p class="auth-welcome-msg">Driver application</p>' : ''}
         <button class="btn btn-gold btn-full" onclick="submitEmailRegister()">
           <span class="material-icons-outlined">person_add</span> Create Account
         </button>
@@ -223,7 +198,7 @@ async function submitEmailRegister() {
   const pass    = document.getElementById("reg-pass")?.value;
   const confirm = document.getElementById("reg-confirm")?.value;
   const city    = document.getElementById("reg-city")?.value;
-  const role    = document.getElementById("reg-drive")?.checked ? "driver" : "customer";
+  const role    = registrationRole;
 
   if (!name)            { showToast("Enter your full name", "error"); return; }
   if (!email)           { showToast("Enter your email", "error"); return; }

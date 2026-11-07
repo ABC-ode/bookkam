@@ -127,6 +127,46 @@ function renderEmailForm(tab = "login", role = registrationRole) {
             </button>
           </div>
         </div>
+        <label class="auth-remember-label">
+          <input type="checkbox" id="email-remember"> Remember me for 7 days
+        </label>
+        <button class="btn btn-gold btn-full" onclick="submitEmailLogin()">
+          <span class="material-icons-outlined">login</span> Login
+        </button>
+        <button class="btn btn-ghost btn-full" onclick="renderForgotForm()">Forgot password?</button>
+      ` : `
+        <div class="input-group">
+          <label>Full Name</label>
+          <input type="text" id="reg-name" class="input-field" placeholder="Your full name">
+        </div>
+        <div class="input-group">
+          <label>Email</label>
+          <input type="email" id="reg-email" class="input-field" placeholder="you@example.com">
+        </div>
+        <div class="input-group">
+          <label>Password</label>
+          <div class="password-wrap">
+            <input type="password" id="reg-pass" class="input-field" placeholder="At least 8 characters">
+            <button class="password-toggle" onclick="togglePassword('reg-pass')">
+              <span class="material-icons-outlined">visibility</span>
+            </button>
+          </div>
+        </div>
+        <div class="input-group">
+          <label>Confirm Password</label>
+          <div class="password-wrap">
+            <input type="password" id="reg-confirm" class="input-field" placeholder="Repeat password">
+            <button class="password-toggle" onclick="togglePassword('reg-confirm')">
+              <span class="material-icons-outlined">visibility</span>
+            </button>
+          </div>
+        </div>
+        <div class="input-group">
+          <label>City</label>
+          <select id="reg-city" class="input-field">
+            ${CITIES.map(c => `<option value="${c}">${c}</option>`).join("")}
+          </select>
+        </div>
         ${registrationRole === "driver" ? '<p class="auth-welcome-msg">Driver application</p>' : ''}
         <button class="btn btn-gold btn-full" onclick="submitEmailRegister()">
           <span class="material-icons-outlined">person_add</span> Create Account
